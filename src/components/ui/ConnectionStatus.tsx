@@ -9,20 +9,26 @@ const ConnectionStatus: React.FC = () => {
 
   const checkConnection = async () => {
     setStatus('checking');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
       // Simple health check - you might want to implement a dedicated endpoint
       const response = await fetch(`${chatService.getApiUrl()}/health`, {
         method: 'GET',
-        signal: AbortSignal.timeout(5000),
+        signal: controller.signal,
       });
-      
+
+      clearTimeout(timeoutId);
+
       if (response.ok) {
-        setStatus('connected');      } else {
+        setStatus('connected');
+      } else {
         setStatus('disconnected');
       }
     } catch {
       setStatus('disconnected');
     } finally {
+      clearTimeout(timeoutId);
       setLastChecked(new Date());
     }
   };
