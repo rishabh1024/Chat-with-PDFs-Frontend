@@ -12,7 +12,12 @@ dist
 dist-ssr
 *.local
 
-# Python backend
+# Environment files (keep .env.example committed)
+.env
+.env.*
+!.env.example
+
+# Python backend (if present locally)
 backend/.venv
 backend/__pycache__
 backend/.env

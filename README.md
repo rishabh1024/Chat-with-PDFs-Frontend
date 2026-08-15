@@ -29,7 +29,7 @@ A modern, responsive React TypeScript frontend for AI chatbot applications with 
 ### 📱 **Responsive Design**
 - **Mobile-First** - Fully responsive design for all screen sizes
 - **Sidebar Navigation** - Collapsible sidebar with chat history, prompts, documents, and tools
-- **Modern UI** - Clean, professional interface with smooth animations
+- **Modern UI** - Clean, professional interface with smooth **animations**
 - **Accessibility** - ARIA labels, keyboard navigation, and screen reader support
 
 ### ⚙️ **Configuration & Performance**
@@ -49,7 +49,8 @@ A modern, responsive React TypeScript frontend for AI chatbot applications with 
 
 1. **Clone and navigate to the project**
    ```powershell
-   cd "c:\Users\risha\python-dir\KnowledgeBase\ChatUI"
+   git clone <your-repo-url>
+   cd AChatUI
    ```
 
 2. **Install dependencies**
@@ -73,11 +74,47 @@ A modern, responsive React TypeScript frontend for AI chatbot applications with 
    http://localhost:5173
    ```
 
+## Deploy on Render
+
+This app is a Vite SPA. Host it as a **Static Site** (not a Web Service). `VITE_*` values are baked into the bundle at **build time**; changing them requires a redeploy.
+
+### Option A: Blueprint (`render.yaml`)
+
+1. Push this repo to GitHub or GitLab
+2. In the [Render Dashboard](https://dashboard.render.com), create a new Blueprint and select the repo
+3. Set `VITE_API_BASE_URL` to your FastAPI URL (for example `https://chat-with-your-pdfs.onrender.com`)
+4. Apply the Blueprint
+
+The Blueprint uses:
+
+- Build command: `npm ci && npm run build`
+- Publish directory: `dist`
+- Rewrite: `/*` → `/index.html`
+
+### Option B: Dashboard Static Site
+
+| Setting | Value |
+|---|---|
+| Runtime | Static Site |
+| Build command | `npm ci && npm run build` |
+| Publish directory | `dist` |
+| Rewrite | Source `/*` → Destination `/index.html` |
+
+Environment variables (Environment tab):
+
+```env
+VITE_API_BASE_URL=https://your-fastapi-service.onrender.com
+VITE_API_TIMEOUT=120000
+VITE_API_RETRY_ATTEMPTS=3
+```
+
+After the frontend URL exists, add that origin to FastAPI `CORSMiddleware` `allow_origins` and confirm chat plus document upload against the live API.
+
 ## 🔧 Configuration
 
 ### Environment Variables
 
-Create a `.env` file in the root directory:
+Create a `.env` file in the root directory (copy from `.env.example`). Do not commit `.env` or `.env.production`.
 
 ```env
 # API Configuration
@@ -89,6 +126,8 @@ VITE_API_RETRY_ATTEMPTS=3
 VITE_DEV_MODE=true
 VITE_LOG_LEVEL=debug
 ```
+
+On Render, set the same `VITE_*` keys in the service Environment tab instead of committing production values.
 
 ### API Endpoints
 
@@ -113,14 +152,17 @@ The frontend generates and stores `chat_id` in browser `localStorage`. The chat 
 
 ### Backend CORS requirement
 
-The FastAPI application on port `8000` must allow requests from the Vite development origin:
+The FastAPI application must allow requests from the frontend origin. For local development that is `http://localhost:5173`. After you deploy this UI, also include the Render frontend URL:
 
 ```python
 from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "https://achatui.onrender.com",  # replace with your Render frontend URL
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -129,33 +171,14 @@ app.add_middleware(
 
 Without this middleware, browsers will block frontend chat requests even when the backend endpoint works directly.
 
-## Document Upload (Supabase Storage)
+## Document Upload
 
-The sidebar **Docs** tab supports uploading PDF, TXT, and Word documents. Files are stored in Supabase Storage via the FastAPI backend in [`backend/`](backend/).
-
-### Supabase setup (one-time)
-
-1. Create a free project at [supabase.com](https://supabase.com)
-2. In **Storage**, create a private bucket named `documents`
-3. Run the SQL in [`backend/supabase/schema.sql`](backend/supabase/schema.sql) in the Supabase SQL Editor
-4. Copy your **Project URL** and **service role key** from Settings → API
-
-### Backend setup
-
-```powershell
-cd backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-Copy-Item .env.example .env
-# Edit .env with your Supabase credentials
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
+The sidebar **Docs** tab supports uploading PDF, TXT, and Word documents. Files are stored by the separate FastAPI backend (for example `https://chat-with-your-pdfs.onrender.com`). This frontend repo does not include backend code.
 
 ### Frontend usage
 
-1. Start the backend on port `8000`
-2. Start the frontend with `npm run dev`
+1. Point `VITE_API_BASE_URL` at a running FastAPI service
+2. Start the frontend with `npm run dev` (or deploy it on Render)
 3. Open the sidebar, go to **Docs**, and click **Upload**
 
 Accepted file types: `.pdf`, `.txt`, `.doc`, `.docx` (max 10 MB).
@@ -168,36 +191,33 @@ src/
 │   ├── chat/                # Chat-related components
 │   │   ├── ChatContainer.tsx    # Main chat interface
 │   │   ├── Message.tsx          # Individual message component
+│   │   ├── MarkdownContent.tsx  # Markdown rendering for AI replies
 │   │   ├── LoadingDots.tsx      # Loading animation
-│   │   └── index.ts             # Chat components barrel export
+│   │   └── index.ts
 │   ├── layout/              # Layout and structural components
 │   │   ├── Sidebar.tsx          # Navigation sidebar
 │   │   ├── ErrorBoundary.tsx    # Error handling wrapper
-│   │   └── index.ts             # Layout components barrel export
-│   ├── ui/                  # Reusable UI components
-│   │   ├── ConnectionStatus.tsx # API status indicator
-│   │   └── index.ts             # UI components barrel export
-│   └── index.ts             # Main components barrel export
+│   │   └── index.ts
+│   └── ui/                  # Reusable UI components
+│       ├── ConnectionStatus.tsx
+│       └── index.ts
 ├── hooks/               # Custom React hooks
-│   ├── useAutoResize.ts     # Auto-resizing textarea hook
-│   ├── useDebounce.ts       # Debouncing hook
-│   └── index.ts             # Hooks barrel export
-├── utils/               # Utility functions
-│   └── index.ts             # Validation, formatting, helper functions
+├── utils/               # Validation, formatting, chat session helpers
+│   └── chatSession.ts       # localStorage chat session persistence
 ├── constants/           # Application constants
-│   └── index.ts             # Configuration constants and enums
 ├── services/            # API service layer
-│   └── chatService.ts       # FastAPI integration
-├── types/              # TypeScript definitions
-│   └── chat.ts              # Chat-related types
-├── config/             # Configuration
-│   └── api.ts               # API configuration
-├── styles/             # Global styles
-│   ├── App.css              # Component styles
-│   └── index.css            # Global styles
-└── assets/             # Static assets
-    └── react.svg            # Icons and images
+│   ├── chatService.ts       # Chat FastAPI integration
+│   └── documentService.ts   # Document upload/list/delete
+├── types/               # TypeScript definitions
+│   ├── chat.ts
+│   └── document.ts
+├── config/              # API configuration (VITE_* env)
+├── styles/
+├── tests/               # Vitest + Testing Library
+└── assets/
 ```
+
+Deploy config lives at the repo root: `render.yaml`, `.nvmrc`, `.env.example`.
 
 ## 🎨 Styling & Theming
 
@@ -254,10 +274,13 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# Enable CORS for frontend
+# Enable CORS for local and production frontend origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "https://achatui.onrender.com",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -341,13 +364,13 @@ This project is licensed under the MIT License.
 
 ## 🎯 Roadmap
 
-- [ ] Message persistence with local storage
+- [x] Message persistence with local storage
 - [x] File upload support
 - [ ] Voice message integration
 - [ ] Multi-language support
 - [ ] Theming system
 - [ ] Plugin architecture
-- [ ] Advanced markdown rendering
+- [x] Advanced markdown rendering
 - [ ] Message search functionality
 
 ---
