@@ -19,6 +19,22 @@ export const formatTimestamp = (date: Date): string => {
   return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 };
 
+export const validateFile = (
+  file: File,
+  allowedTypes: readonly string[],
+  maxSize: number
+): { isValid: boolean; error?: string } => {
+  if (!allowedTypes.includes(file.type)) {
+    return { isValid: false, error: 'Unsupported file type. Please upload a PDF, TXT, or Word document.' };
+  }
+
+  if (file.size > maxSize) {
+    return { isValid: false, error: 'File too large. Maximum size is 10 MB.' };
+  }
+
+  return { isValid: true };
+};
+
 export const debounce = <T extends (...args: unknown[]) => unknown>(
   func: T,
   delay: number

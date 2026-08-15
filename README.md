@@ -94,22 +94,71 @@ VITE_LOG_LEVEL=debug
 
 The frontend expects the following FastAPI endpoints:
 
-- `POST /chat` - Send chat messages
-  ```json
-  {
-    "message": "Your message here"
-  }
-  ```
+- `POST /chat/conversation/{chat_id}/messages/?message_query=<text>` - Send a chat message
   
 - `GET /health` - Health check (optional)
+- `GET /documents` - List uploaded documents
+- `POST /documents` - Upload a document (`multipart/form-data`)
+- `DELETE /documents/{id}` - Delete a document
 
-Expected response format:
+The frontend generates and stores `chat_id` in browser `localStorage`. The chat response must match:
+
 ```json
 {
-  "message": "AI response here",
-  "success": true
+  "chat_id": "123e4567-e89b-12d3-a456-426614174000",
+  "ai_message": "AI response here",
+  "chat_history_messages": ["User message", "AI response here"]
 }
 ```
+
+### Backend CORS requirement
+
+The FastAPI application on port `8000` must allow requests from the Vite development origin:
+
+```python
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
+
+Without this middleware, browsers will block frontend chat requests even when the backend endpoint works directly.
+
+## Document Upload (Supabase Storage)
+
+The sidebar **Docs** tab supports uploading PDF, TXT, and Word documents. Files are stored in Supabase Storage via the FastAPI backend in [`backend/`](backend/).
+
+### Supabase setup (one-time)
+
+1. Create a free project at [supabase.com](https://supabase.com)
+2. In **Storage**, create a private bucket named `documents`
+3. Run the SQL in [`backend/supabase/schema.sql`](backend/supabase/schema.sql) in the Supabase SQL Editor
+4. Copy your **Project URL** and **service role key** from Settings → API
+
+### Backend setup
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+# Edit .env with your Supabase credentials
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### Frontend usage
+
+1. Start the backend on port `8000`
+2. Start the frontend with `npm run dev`
+3. Open the sidebar, go to **Docs**, and click **Upload**
+
+Accepted file types: `.pdf`, `.txt`, `.doc`, `.docx` (max 10 MB).
 
 ## 📁 Project Structure
 
@@ -293,7 +342,7 @@ This project is licensed under the MIT License.
 ## 🎯 Roadmap
 
 - [ ] Message persistence with local storage
-- [ ] File upload support
+- [x] File upload support
 - [ ] Voice message integration
 - [ ] Multi-language support
 - [ ] Theming system

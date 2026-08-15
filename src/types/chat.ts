@@ -14,7 +14,8 @@ export interface ChatState {
 }
 
 export interface ChatResponse {
+  chatId: string;
   message: string;
+  history: string[];
   success: boolean;
-  error?: string;
 }

@@ -13,6 +13,19 @@ export const UI_CONSTANTS = {
 } as const;
 
 export const API_ENDPOINTS = {
-  CHAT: '/chat',
+  CHAT_MESSAGE: (chatId: string) => `/chat/conversation/${chatId}/messages/`,
+  UPLOAD_AND_INDEX: '/upload_and_index',
   HEALTH: '/health',
+  DOCUMENTS: '/documents',
+} as const;
+
+export const FILE_UPLOAD_CONFIG = {
+  MAX_FILE_SIZE: 10 * 1024 * 1024,
+  ALLOWED_FILE_TYPES: [
+    'application/pdf',
+    'text/plain',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  ],
+  ACCEPTED_EXTENSIONS: '.pdf,.txt,.doc,.docx',
 } as const;

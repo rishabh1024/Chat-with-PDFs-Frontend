@@ -1,5 +1,6 @@
 import React from 'react';
 import type { Message } from '../../types/chat';
+import MarkdownContent from './MarkdownContent';
 
 interface MessageProps {
   message: Message;
@@ -41,9 +42,7 @@ const MessageComponent: React.FC<MessageProps> = ({ message }) => {
               ? 'bg-primary-500 text-white rounded-br-sm' 
               : 'bg-gray-100 text-gray-900 rounded-bl-sm'
           }`}>
-            <div className="whitespace-pre-wrap text-sm leading-relaxed">
-              {message.content}
-            </div>
+            <MarkdownContent content={message.content} />
           </div>
           
           {/* Timestamp */}

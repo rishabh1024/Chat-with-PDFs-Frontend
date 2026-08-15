@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { generateUniqueId, validateMessage, formatTimestamp, debounce } from '../../utils'
+import { generateUniqueId, validateMessage, validateFile, formatTimestamp, debounce } from '../../utils'
+import { FILE_UPLOAD_CONFIG } from '../../constants'
 
 describe('Utility Functions', () => {
   describe('generateUniqueId', () => {
@@ -76,7 +77,50 @@ describe('Utility Functions', () => {
       
       expect(result.isValid).toBe(true)
     })
-  })  describe('formatTimestamp', () => {
+  })
+
+  describe('validateFile', () => {
+    it('accepts supported file types under the size limit', () => {
+      const file = new File(['content'], 'test.pdf', { type: 'application/pdf' })
+
+      const result = validateFile(
+        file,
+        FILE_UPLOAD_CONFIG.ALLOWED_FILE_TYPES,
+        FILE_UPLOAD_CONFIG.MAX_FILE_SIZE
+      )
+
+      expect(result.isValid).toBe(true)
+    })
+
+    it('rejects unsupported file types', () => {
+      const file = new File(['content'], 'test.exe', { type: 'application/x-msdownload' })
+
+      const result = validateFile(
+        file,
+        FILE_UPLOAD_CONFIG.ALLOWED_FILE_TYPES,
+        FILE_UPLOAD_CONFIG.MAX_FILE_SIZE
+      )
+
+      expect(result.isValid).toBe(false)
+      expect(result.error).toContain('Unsupported file type')
+    })
+
+    it('rejects files over the size limit', () => {
+      const largeContent = new Uint8Array(11 * 1024 * 1024)
+      const file = new File([largeContent], 'large.pdf', { type: 'application/pdf' })
+
+      const result = validateFile(
+        file,
+        FILE_UPLOAD_CONFIG.ALLOWED_FILE_TYPES,
+        FILE_UPLOAD_CONFIG.MAX_FILE_SIZE
+      )
+
+      expect(result.isValid).toBe(false)
+      expect(result.error).toContain('File too large')
+    })
+  })
+
+  describe('formatTimestamp', () => {
     it('formats timestamp correctly', () => {
       const date = new Date('2025-05-25T14:30:00')
       const formatted = formatTimestamp(date)

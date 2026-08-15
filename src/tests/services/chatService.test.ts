@@ -4,6 +4,12 @@ import { ChatService } from '../../services/chatService'
 // Mock fetch globally
 const mockFetch = vi.fn()
 global.fetch = mockFetch
+const chatId = '123e4567-e89b-12d3-a456-426614174000'
+const apiResponse = {
+  chat_id: chatId,
+  ai_message: 'AI response',
+  chat_history_messages: ['Hello', 'AI response'],
+}
 
 describe('ChatService', () => {
   let chatService: ChatService
@@ -21,22 +27,16 @@ describe('ChatService', () => {
     it('sends message to correct endpoint with proper payload', async () => {
       const mockResponse = {
         ok: true,
-        json: async () => ({ message: 'AI response' }),
+        json: async () => apiResponse,
       }
       mockFetch.mockResolvedValue(mockResponse)
 
-      await chatService.sendMessage('Hello, AI!')
+      await chatService.sendMessage(chatId, 'Hello, AI!')
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:8000/chat',
+        `http://localhost:8000/chat/conversation/${chatId}/messages/?message_query=Hello%2C+AI%21`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            message: 'Hello, AI!',
-          }),
           signal: expect.any(AbortSignal),
         }
       )
@@ -45,31 +45,33 @@ describe('ChatService', () => {
     it('returns successful response with message', async () => {
       const mockResponse = {
         ok: true,
-        json: async () => ({ message: 'AI response' }),
+        json: async () => apiResponse,
       }
       mockFetch.mockResolvedValue(mockResponse)
 
-      const result = await chatService.sendMessage('Test message')
+      const result = await chatService.sendMessage(chatId, 'Test message')
 
       expect(result).toEqual({
+        chatId,
         message: 'AI response',
+        history: ['Hello', 'AI response'],
         success: true,
       })
     })
 
-    it('handles response field instead of message field', async () => {
+    it('encodes special characters in the message query', async () => {
       const mockResponse = {
         ok: true,
-        json: async () => ({ response: 'AI response via response field' }),
+        json: async () => apiResponse,
       }
       mockFetch.mockResolvedValue(mockResponse)
 
-      const result = await chatService.sendMessage('Test message')
+      await chatService.sendMessage(chatId, 'What is 2 + 2?')
 
-      expect(result).toEqual({
-        message: 'AI response via response field',
-        success: true,
-      })
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('message_query=What+is+2+%2B+2%3F'),
+        expect.any(Object)
+      )
     })
 
     it('throws error for HTTP error responses', async () => {
@@ -80,7 +82,7 @@ describe('ChatService', () => {
       }
       mockFetch.mockResolvedValue(mockResponse)
 
-      await expect(chatService.sendMessage('Test message')).rejects.toThrow(
+      await expect(chatService.sendMessage(chatId, 'Test message')).rejects.toThrow(
         'HTTP 500: Internal Server Error'
       )
     })
@@ -92,33 +94,26 @@ describe('ChatService', () => {
       }
       mockFetch.mockResolvedValue(mockResponse)
 
-      await expect(chatService.sendMessage('Test message')).rejects.toThrow(
-        'Invalid response format: missing message field'
+      await expect(chatService.sendMessage(chatId, 'Test message')).rejects.toThrow(
+        'Invalid response format: missing chat response fields'
       )
     })
 
     it('handles timeout correctly', async () => {
-      vi.useFakeTimers()
-      
       const chatServiceWithShortTimeout = new ChatService('http://localhost:8000', 100)
-      
-      // Mock a request that never resolves
-      mockFetch.mockImplementation(() => new Promise(() => {}))
+      const abortError = new Error('The operation was aborted')
+      abortError.name = 'AbortError'
+      mockFetch.mockRejectedValue(abortError)
 
-      const promise = chatServiceWithShortTimeout.sendMessage('Test message')
-      
-      // Fast-forward time to trigger timeout
-      vi.advanceTimersByTime(100)
-      
-      await expect(promise).rejects.toThrow('Request timeout - please try again')
-      
-      vi.useRealTimers()
+      await expect(
+        chatServiceWithShortTimeout.sendMessage(chatId, 'Test message')
+      ).rejects.toThrow('Request timeout - please try again')
     })
 
     it('handles network errors', async () => {
       mockFetch.mockRejectedValue(new Error('Network error'))
 
-      await expect(chatService.sendMessage('Test message')).rejects.toThrow(
+      await expect(chatService.sendMessage(chatId, 'Test message')).rejects.toThrow(
         'Network error'
       )
     })
@@ -126,7 +121,7 @@ describe('ChatService', () => {
     it('handles unknown errors', async () => {
       mockFetch.mockRejectedValue('String error')
 
-      await expect(chatService.sendMessage('Test message')).rejects.toThrow(
+      await expect(chatService.sendMessage(chatId, 'Test message')).rejects.toThrow(
         'Unknown error occurred'
       )
     })
@@ -139,7 +134,7 @@ describe('ChatService', () => {
       }
       mockFetch.mockResolvedValue(mockResponse)
 
-      await expect(chatService.sendMessage('Test message')).rejects.toThrow(
+      await expect(chatService.sendMessage(chatId, 'Test message')).rejects.toThrow(
         'HTTP 404: Unknown error'
       )
     })
@@ -159,15 +154,15 @@ describe('ChatService', () => {
     it('uses new API URL for requests', async () => {
       const mockResponse = {
         ok: true,
-        json: async () => ({ message: 'response from new API' }),
+        json: async () => ({ ...apiResponse, ai_message: 'response from new API' }),
       }
       mockFetch.mockResolvedValue(mockResponse)
 
       chatService.setApiUrl('http://newapi.com')
-      await chatService.sendMessage('Test message')
+      await chatService.sendMessage(chatId, 'Test message')
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://newapi.com/chat',
+        `http://newapi.com/chat/conversation/${chatId}/messages/?message_query=Test+message`,
         expect.any(Object)
       )
     })
@@ -184,14 +179,14 @@ describe('ChatService', () => {
       const customService = new ChatService('http://custom.api', 2000)
       const mockResponse = {
         ok: true,
-        json: async () => ({ message: 'response' }),
+        json: async () => ({ ...apiResponse, ai_message: 'response' }),
       }
       mockFetch.mockResolvedValue(mockResponse)
 
-      await customService.sendMessage('test')
+      await customService.sendMessage(chatId, 'test')
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://custom.api/chat',
+        `http://custom.api/chat/conversation/${chatId}/messages/?message_query=test`,
         expect.any(Object)
       )
     })

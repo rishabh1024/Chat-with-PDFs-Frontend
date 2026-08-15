@@ -1,5 +1,6 @@
 import { ChatResponse } from '../types/chat';
 import { apiConfig } from '../config/api';
+import { API_ENDPOINTS } from '../constants';
 
 export class ChatService {
   private apiUrl: string;
@@ -8,23 +9,21 @@ export class ChatService {
   constructor(apiUrl: string = apiConfig.baseUrl, timeout: number = apiConfig.timeout) {
     this.apiUrl = apiUrl;
     this.timeout = timeout;
-  }  async sendMessage(message: string): Promise<ChatResponse> {
+  }
+
+  async sendMessage(chatId: string, message: string): Promise<ChatResponse> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    const query = new URLSearchParams({ message_query: message });
+
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-
-      const response = await fetch(`${this.apiUrl}/chat`, {
+      const response = await fetch(
+        `${this.apiUrl}${API_ENDPOINTS.CHAT_MESSAGE(chatId)}?${query.toString()}`,
+        {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          message: message,
-        }),
         signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
+        }
+      );
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => 'Unknown error');
@@ -33,25 +32,35 @@ export class ChatService {
 
       const data = await response.json();
       
-      if (!data.message && !data.response) {
-        throw new Error('Invalid response format: missing message field');
+      if (!data.chat_id || !data.ai_message || !Array.isArray(data.chat_history_messages)) {
+        throw new Error('Invalid response format: missing chat response fields');
       }
       
       return {
-        message: data.message || data.response,
+        chatId: data.chat_id,
+        message: data.ai_message,
+        history: data.chat_history_messages,
         success: true,
       };
     } catch (error) {
       console.error('Chat service error:', error);
+
+      if (
+        error &&
+        typeof error === 'object' &&
+        'name' in error &&
+        error.name === 'AbortError'
+      ) {
+        throw new Error('Request timeout - please try again');
+      }
       
       if (error instanceof Error) {
-        if (error.name === 'AbortError') {
-          throw new Error('Request timeout - please try again');
-        }
         throw error;
       }
       
       throw new Error('Unknown error occurred');
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 

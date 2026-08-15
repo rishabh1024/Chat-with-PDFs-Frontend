@@ -8,7 +8,7 @@ const getApiConfig = (): ApiConfig => {
   // Default configuration
   const defaultConfig: ApiConfig = {
     baseUrl: 'http://localhost:8000',
-    timeout: 30000,
+    timeout: 120000,
     retryAttempts: 3,
   };
 

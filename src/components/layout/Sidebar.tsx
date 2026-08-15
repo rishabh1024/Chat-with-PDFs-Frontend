@@ -1,4 +1,7 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { FILE_UPLOAD_CONFIG } from '../../constants';
+import { documentService } from '../../services/documentService';
+import { DocumentRecord } from '../../types/document';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -19,14 +22,6 @@ interface SavedPrompt {
   category: string;
 }
 
-interface Document {
-  id: string;
-  name: string;
-  type: string;
-  size: string;
-  uploadDate: Date;
-}
-
 interface Tool {
   id: string;
   name: string;
@@ -37,6 +32,12 @@ interface Tool {
 
 const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
   const [activeTab, setActiveTab] = useState<'history' | 'prompts' | 'documents' | 'tools'>('history');
+  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
+  const [documentsError, setDocumentsError] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Mock data - replace with real data from your backend
   const chatHistory: ChatHistoryItem[] = [
@@ -81,30 +82,6 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
     }
   ];
 
-  const documents: Document[] = [
-    {
-      id: '1',
-      name: 'API Documentation.pdf',
-      type: 'PDF',
-      size: '2.4 MB',
-      uploadDate: new Date(Date.now() - 86400000)
-    },
-    {
-      id: '2',
-      name: 'Project Requirements.docx',
-      type: 'Word',
-      size: '1.2 MB',
-      uploadDate: new Date(Date.now() - 172800000)
-    },
-    {
-      id: '3',
-      name: 'Code Examples.txt',
-      type: 'Text',
-      size: '156 KB',
-      uploadDate: new Date(Date.now() - 259200000)
-    }
-  ];
-
   const tools: Tool[] = [
     {
       id: '1',
@@ -136,9 +113,10 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
     }
   ];
 
-  const formatTimeAgo = (date: Date) => {
+  const formatTimeAgo = (date: Date | string) => {
+    const parsedDate = typeof date === 'string' ? new Date(date) : date;
     const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
+    const diffMs = now.getTime() - parsedDate.getTime();
     const diffMins = Math.floor(diffMs / 60000);
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
@@ -146,6 +124,63 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
     return `${diffDays}d ago`;
+  };
+
+  const loadDocuments = useCallback(async () => {
+    setDocumentsLoading(true);
+    setDocumentsError(null);
+
+    try {
+      const data = await documentService.listDocuments();
+      setDocuments(data);
+    } catch (error) {
+      setDocumentsError(error instanceof Error ? error.message : 'Failed to load documents');
+    } finally {
+      setDocumentsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'documents') {
+      loadDocuments();
+    }
+  }, [activeTab, loadDocuments]);
+
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file) return;
+
+    setIsUploading(true);
+    setDocumentsError(null);
+
+    try {
+      const uploadedDocument = await documentService.uploadDocument(file);
+      setDocuments((prev) => [uploadedDocument, ...prev]);
+    } catch (error) {
+      setDocumentsError(error instanceof Error ? error.message : 'Failed to upload document');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleDeleteDocument = async (documentId: string) => {
+    setDeletingDocumentId(documentId);
+    setDocumentsError(null);
+
+    try {
+      await documentService.deleteDocument(documentId);
+      setDocuments((prev) => prev.filter((doc) => doc.id !== documentId));
+    } catch (error) {
+      setDocumentsError(error instanceof Error ? error.message : 'Failed to delete document');
+    } finally {
+      setDeletingDocumentId(null);
+    }
   };
 
   const tabs = [
@@ -253,14 +288,43 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-medium text-gray-900">Documents</h3>
-                <button className="text-primary-600 hover:text-primary-700 text-sm">
-                  Upload
+                <button
+                  type="button"
+                  onClick={handleUploadClick}
+                  disabled={isUploading}
+                  className="text-primary-600 hover:text-primary-700 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isUploading ? 'Uploading...' : 'Upload'}
                 </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={FILE_UPLOAD_CONFIG.ACCEPTED_EXTENSIONS}
+                  className="hidden"
+                  onChange={handleFileChange}
+                />
               </div>
+
+              {documentsError && (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-md p-2">
+                  {documentsError}
+                </p>
+              )}
+
+              {documentsLoading && (
+                <p className="text-xs text-gray-500">Loading documents...</p>
+              )}
+
+              {!documentsLoading && documents.length === 0 && (
+                <p className="text-xs text-gray-500">
+                  No documents yet. Upload a PDF or document to get started.
+                </p>
+              )}
+
               {documents.map((doc) => (
                 <div
                   key={doc.id}
-                  className="p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
+                  className="p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
                 >
                   <div className="flex items-start gap-3">
                     <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
@@ -273,6 +337,15 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
                       <p className="text-xs text-gray-500">{doc.type} • {doc.size}</p>
                       <span className="text-xs text-gray-400">{formatTimeAgo(doc.uploadDate)}</span>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteDocument(doc.id)}
+                      disabled={deletingDocumentId === doc.id}
+                      className="text-xs text-red-600 hover:text-red-700 disabled:opacity-50"
+                      title="Delete document"
+                    >
+                      {deletingDocumentId === doc.id ? 'Deleting...' : 'Delete'}
+                    </button>
                   </div>
                 </div>
               ))}

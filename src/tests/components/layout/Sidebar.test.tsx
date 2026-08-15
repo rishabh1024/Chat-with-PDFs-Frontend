@@ -1,86 +1,122 @@
-import { describe, it, expect } from 'vitest'
-import { render, screen } from '../../../test-utils/testing-library-utils'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, waitFor } from '../../../test-utils/testing-library-utils'
 import userEvent from '@testing-library/user-event'
 import { Sidebar } from '../../../components/layout'
+import { documentService } from '../../../services/documentService'
 
-describe('Sidebar', () => {
-  it('renders sidebar with correct title', () => {
-    render(<Sidebar />)
-    
-    expect(screen.getByText('Chat History')).toBeInTheDocument()
+vi.mock('../../../services/documentService', () => ({
+  documentService: {
+    listDocuments: vi.fn(),
+    uploadDocument: vi.fn(),
+    deleteDocument: vi.fn(),
+  },
+}))
+
+const mockDocumentService = vi.mocked(documentService)
+
+describe('Sidebar documents', () => {
+  const defaultProps = {
+    isOpen: true,
+    onToggle: vi.fn(),
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockDocumentService.listDocuments.mockResolvedValue([])
   })
 
-  it('displays new chat button', () => {
-    render(<Sidebar />)
-    
-    expect(screen.getByText('New Chat')).toBeInTheDocument()
+  it('renders sidebar with tabs', () => {
+    render(<Sidebar {...defaultProps} />)
+
+    expect(screen.getByText('AI Assistant')).toBeInTheDocument()
+    expect(screen.getByText('Docs')).toBeInTheDocument()
   })
 
-  it('shows placeholder text when no conversations exist', () => {
-    render(<Sidebar />)
-    
-    expect(screen.getByText('No conversations yet')).toBeInTheDocument()
-    expect(screen.getByText('Start a new conversation to see it here.')).toBeInTheDocument()
-  })
-
-  it('allows clicking new chat button', async () => {
+  it('loads and displays documents when the documents tab is active', async () => {
     const user = userEvent.setup()
-    render(<Sidebar />)
-    
-    const newChatButton = screen.getByText('New Chat')
-    await user.click(newChatButton)
-    
-    // Button should be clickable (no error thrown)
-    expect(newChatButton).toBeInTheDocument()
+    mockDocumentService.listDocuments.mockResolvedValue([
+      {
+        id: '1',
+        name: 'API Documentation.pdf',
+        type: 'PDF',
+        size: '2.4 MB',
+        uploadDate: '2026-01-01T00:00:00.000Z',
+      },
+    ])
+
+    render(<Sidebar {...defaultProps} />)
+    await user.click(screen.getByText('Docs'))
+
+    await waitFor(() => {
+      expect(mockDocumentService.listDocuments).toHaveBeenCalled()
+    })
+
+    expect(screen.getByText('API Documentation.pdf')).toBeInTheDocument()
+    expect(screen.getByText('PDF • 2.4 MB')).toBeInTheDocument()
   })
 
-  it('has proper styling classes', () => {
-    render(<Sidebar />)
-    
-    const sidebar = screen.getByText('Chat History').closest('div')?.parentElement
-    expect(sidebar).toHaveClass('w-64', 'bg-secondary-900', 'text-white')
+  it('shows empty state when no documents exist', async () => {
+    const user = userEvent.setup()
+    render(<Sidebar {...defaultProps} />)
+
+    await user.click(screen.getByText('Docs'))
+
+    await waitFor(() => {
+      expect(screen.getByText('No documents yet. Upload a PDF or document to get started.')).toBeInTheDocument()
+    })
   })
 
-  it('displays plus icon for new chat', () => {
-    render(<Sidebar />)
-    
-    // Should have a plus icon in the new chat button
-    const newChatButton = screen.getByText('New Chat').closest('button')
-    const icon = newChatButton?.querySelector('svg')
-    expect(icon).toBeInTheDocument()
+  it('uploads a document when a file is selected', async () => {
+    const user = userEvent.setup()
+    mockDocumentService.uploadDocument.mockResolvedValue({
+      id: '2',
+      name: 'notes.pdf',
+      type: 'PDF',
+      size: '1.0 KB',
+      uploadDate: '2026-01-02T00:00:00.000Z',
+    })
+
+    render(<Sidebar {...defaultProps} />)
+    await user.click(screen.getByText('Docs'))
+
+    const file = new File(['content'], 'notes.pdf', { type: 'application/pdf' })
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+
+    await user.upload(fileInput, file)
+
+    await waitFor(() => {
+      expect(mockDocumentService.uploadDocument).toHaveBeenCalledWith(file)
+    })
+
+    expect(screen.getByText('notes.pdf')).toBeInTheDocument()
   })
 
-  it('applies hover effects to new chat button', () => {
-    render(<Sidebar />)
-    
-    const newChatButton = screen.getByText('New Chat').closest('button')
-    expect(newChatButton).toHaveClass('hover:bg-secondary-800')
-  })
+  it('deletes a document when delete is clicked', async () => {
+    const user = userEvent.setup()
+    mockDocumentService.listDocuments.mockResolvedValue([
+      {
+        id: '1',
+        name: 'API Documentation.pdf',
+        type: 'PDF',
+        size: '2.4 MB',
+        uploadDate: '2026-01-01T00:00:00.000Z',
+      },
+    ])
+    mockDocumentService.deleteDocument.mockResolvedValue()
 
-  it('has proper accessibility attributes', () => {
-    render(<Sidebar />)
-    
-    const newChatButton = screen.getByRole('button', { name: /new chat/i })
-    expect(newChatButton).toBeInTheDocument()
-  })
+    render(<Sidebar {...defaultProps} />)
+    await user.click(screen.getByText('Docs'))
 
-  it('renders with fixed height and scrollable content area', () => {
-    render(<Sidebar />)
-    
-    const sidebar = screen.getByText('Chat History').closest('div')?.parentElement
-    expect(sidebar).toHaveClass('h-full')
-    
-    const contentArea = screen.getByText('No conversations yet').closest('div')
-    expect(contentArea).toHaveClass('flex-1', 'overflow-y-auto')
-  })
+    await waitFor(() => {
+      expect(screen.getByText('API Documentation.pdf')).toBeInTheDocument()
+    })
 
-  it('maintains consistent spacing and layout', () => {
-    render(<Sidebar />)
-    
-    const header = screen.getByText('Chat History').closest('div')
-    expect(header).toHaveClass('p-4', 'border-b', 'border-secondary-700')
-    
-    const content = screen.getByText('No conversations yet').closest('div')
-    expect(content).toHaveClass('p-4')
+    await user.click(screen.getByRole('button', { name: 'Delete' }))
+
+    await waitFor(() => {
+      expect(mockDocumentService.deleteDocument).toHaveBeenCalledWith('1')
+    })
+
+    expect(screen.queryByText('API Documentation.pdf')).not.toBeInTheDocument()
   })
 })

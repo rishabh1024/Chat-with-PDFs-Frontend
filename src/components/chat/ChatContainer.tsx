@@ -1,7 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Message, ChatState } from '../../types/chat';
 import { chatService } from '../../services/chatService';
+import { documentService } from '../../services/documentService';
+import { FILE_UPLOAD_CONFIG } from '../../constants';
+import { IndexedDocumentUpload } from '../../types/document';
 import { generateUniqueId, validateMessage } from '../../utils';
+import { getOrCreateChatId } from '../../utils/chatSession';
 import MessageComponent from './Message';
 import LoadingDots from './LoadingDots';
 
@@ -13,10 +17,20 @@ const ChatContainer: React.FC = () => {
   });
   
   const [inputValue, setInputValue] = useState('');
+  const [chatId] = useState(getOrCreateChatId);
+  const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [attachment, setAttachment] = useState<{
+    fileName: string;
+    upload: IndexedDocumentUpload;
+  } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (typeof messagesEndRef.current?.scrollIntoView === 'function') {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
   };
 
   useEffect(() => {
@@ -52,8 +66,8 @@ const ChatContainer: React.FC = () => {
     setInputValue('');
 
     try {
-      const response = await chatService.sendMessage(userMessage.content);
-        const botMessage: Message = {
+      const response = await chatService.sendMessage(chatId, userMessage.content);
+      const botMessage: Message = {
         id: generateUniqueId(),
         content: response.message || 'Sorry, I received an empty response.',
         role: 'assistant',
@@ -84,6 +98,41 @@ const ChatContainer: React.FC = () => {
 
   const clearError = () => {
     setChatState(prev => ({ ...prev, error: null }));
+  };
+
+  const handleAttachmentClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleAttachmentChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file) return;
+
+    setIsUploadingAttachment(true);
+    setAttachmentError(null);
+
+    try {
+      const upload = await documentService.uploadAndIndex(file);
+
+      if (upload.uploadStatus === 'Failed') {
+        throw new Error(upload.uploadError || 'File upload or indexing failed');
+      }
+
+      setAttachment({ fileName: file.name, upload });
+    } catch (error) {
+      setAttachmentError(
+        error instanceof Error ? error.message : 'Failed to upload and index file'
+      );
+    } finally {
+      setIsUploadingAttachment(false);
+    }
+  };
+
+  const removeAttachment = () => {
+    setAttachment(null);
+    setAttachmentError(null);
   };
 
   return (
@@ -149,13 +198,51 @@ const ChatContainer: React.FC = () => {
           {/* Input Area */}
           <div className="flex-shrink-0 border-t border-gray-200 bg-white">
             <div className="px-4 py-4">
+              {attachment && (
+                <div className="mb-3 flex items-start justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-green-900">
+                      {attachment.fileName}
+                    </p>
+                    <p className="text-xs text-green-700">
+                      Uploaded and indexed
+                      {Object.keys(attachment.upload.indexingStatus).length > 0 && (
+                        <> · {Object.values(attachment.upload.indexingStatus).join(', ')}</>
+                      )}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={removeAttachment}
+                    className="text-sm text-green-800 hover:text-green-950"
+                    aria-label="Remove attachment"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+
+              {attachmentError && (
+                <p className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  {attachmentError}
+                </p>
+              )}
+
               <div className="relative">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={FILE_UPLOAD_CONFIG.ACCEPTED_EXTENSIONS}
+                  onChange={handleAttachmentChange}
+                  className="hidden"
+                  data-testid="chat-attachment-input"
+                />
                 <textarea
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
                   onKeyPress={handleKeyPress}
                   placeholder="Message AI Assistant..."
-                  className="w-full resize-none border border-gray-300 rounded-xl px-4 py-3 pr-12 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200 placeholder-gray-500"
+                  className="w-full resize-none border border-gray-300 rounded-xl px-12 py-3 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200 placeholder-gray-500"
                   rows={1}
                   disabled={chatState.isLoading}
                   style={{
@@ -164,8 +251,26 @@ const ChatContainer: React.FC = () => {
                   }}
                 />
                 <button
+                  type="button"
+                  onClick={handleAttachmentClick}
+                  disabled={isUploadingAttachment}
+                  className="absolute left-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label={isUploadingAttachment ? 'Uploading attachment' : 'Attach document'}
+                  title="Attach document"
+                >
+                  {isUploadingAttachment ? (
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-500 border-t-transparent" />
+                  ) : (
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828L18 9.828a4 4 0 10-5.656-5.656L5.758 10.758a6 6 0 108.484 8.484L20.5 13" />
+                    </svg>
+                  )}
+                </button>
+                <button
+                  type="button"
                   onClick={handleSendMessage}
                   disabled={chatState.isLoading || !inputValue.trim()}
+                  aria-label="Send message"
                   className="absolute right-2 top-1/2 transform -translate-y-1/2 w-8 h-8 bg-primary-500 hover:bg-primary-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-all duration-200 flex items-center justify-center"
                 >
                   {chatState.isLoading ? (
