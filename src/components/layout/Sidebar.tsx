@@ -1,18 +1,20 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FILE_UPLOAD_CONFIG } from '../../constants';
 import { documentService } from '../../services/documentService';
+import { Conversation } from '../../types/chat';
 import { DocumentRecord } from '../../types/document';
 
 interface SidebarProps {
   isOpen: boolean;
   onToggle: () => void;
-}
-
-interface ChatHistoryItem {
-  id: string;
-  title: string;
-  lastMessage: string;
-  timestamp: Date;
+  conversations: Conversation[];
+  conversationsLoading: boolean;
+  conversationsError: string | null;
+  activeConversationId: string | null;
+  deletingConversationId: string | null;
+  onNewChat: () => void;
+  onSelectConversation: (id: string) => void;
+  onDeleteConversation: (id: string) => void;
 }
 
 interface SavedPrompt {
@@ -30,7 +32,18 @@ interface Tool {
   isActive: boolean;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
+const Sidebar: React.FC<SidebarProps> = ({
+  isOpen,
+  onToggle,
+  conversations,
+  conversationsLoading,
+  conversationsError,
+  activeConversationId,
+  deletingConversationId,
+  onNewChat,
+  onSelectConversation,
+  onDeleteConversation,
+}) => {
   const [activeTab, setActiveTab] = useState<'history' | 'prompts' | 'documents' | 'tools'>('history');
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(false);
@@ -38,28 +51,6 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
   const [isUploading, setIsUploading] = useState(false);
   const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Mock data - replace with real data from your backend
-  const chatHistory: ChatHistoryItem[] = [
-    {
-      id: '1',
-      title: 'React Components Discussion',
-      lastMessage: 'How do I create reusable components?',
-      timestamp: new Date(Date.now() - 3600000)
-    },
-    {
-      id: '2',
-      title: 'API Integration Help',
-      lastMessage: 'Help me integrate FastAPI backend',
-      timestamp: new Date(Date.now() - 7200000)
-    },
-    {
-      id: '3',
-      title: 'CSS Styling Questions',
-      lastMessage: 'Best practices for Tailwind CSS',
-      timestamp: new Date(Date.now() - 86400000)
-    }
-  ];
 
   const savedPrompts: SavedPrompt[] = [
     {
@@ -191,18 +182,16 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
   ];
 
   return (
-    <>      {/* Overlay */}
+    <>
       {isOpen && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-50 z-40" 
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 z-40"
           onClick={onToggle}
         />
       )}
-        {/* Sidebar */}
       <div className={`fixed left-0 top-0 h-full bg-white border-r border-gray-200 transition-transform duration-300 ease-in-out z-50 ${
         isOpen ? 'translate-x-0' : '-translate-x-full'
       }`} style={{ width: '320px' }}>
-          {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200">
           <h2 className="text-lg font-semibold text-gray-900">AI Assistant</h2>
           <button
@@ -216,8 +205,8 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
           </button>
         </div>
 
-        {/* Tab Navigation */}
-        <div className="flex border-b border-gray-200">          {tabs.map((tab) => (
+        <div className="flex border-b border-gray-200">
+          {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as 'history' | 'prompts' | 'documents' | 'tools')}
@@ -235,31 +224,81 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
           ))}
         </div>
 
-        {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-4">
-          {/* Chat History Tab */}
           {activeTab === 'history' && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-medium text-gray-900">Recent Chats</h3>
-                <button className="text-primary-600 hover:text-primary-700 text-sm">
+                <button
+                  type="button"
+                  onClick={onNewChat}
+                  className="text-primary-600 hover:text-primary-700 text-sm"
+                >
                   New Chat
                 </button>
               </div>
-              {chatHistory.map((chat) => (
+
+              {conversationsError && (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-md p-2">
+                  {conversationsError}
+                </p>
+              )}
+
+              {conversationsLoading && (
+                <p className="text-xs text-gray-500">Loading conversations...</p>
+              )}
+
+              {!conversationsLoading && conversations.length === 0 && (
+                <p className="text-xs text-gray-500">
+                  No conversations yet. Start a new chat to get going.
+                </p>
+              )}
+
+              {conversations.map((chat) => (
                 <div
                   key={chat.id}
-                  className="p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onSelectConversation(chat.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      onSelectConversation(chat.id);
+                    }
+                  }}
+                  className={`p-3 rounded-lg border cursor-pointer transition-colors ${
+                    activeConversationId === chat.id
+                      ? 'border-primary-300 bg-primary-50'
+                      : 'border-gray-200 hover:bg-gray-50'
+                  }`}
                 >
-                  <h4 className="text-sm font-medium text-gray-900 truncate">{chat.title}</h4>
-                  <p className="text-xs text-gray-500 mt-1 truncate">{chat.lastMessage}</p>
-                  <span className="text-xs text-gray-400 mt-2 block">{formatTimeAgo(chat.timestamp)}</span>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <h4 className="text-sm font-medium text-gray-900 truncate">
+                        {chat.title ?? 'New Conversation'}
+                      </h4>
+                      <span className="text-xs text-gray-400 mt-2 block">
+                        {formatTimeAgo(chat.updatedAt)}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onDeleteConversation(chat.id);
+                      }}
+                      disabled={deletingConversationId === chat.id}
+                      className="text-xs text-red-600 hover:text-red-700 disabled:opacity-50"
+                      title="Delete conversation"
+                    >
+                      {deletingConversationId === chat.id ? 'Deleting...' : 'Delete'}
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
           )}
 
-          {/* Saved Prompts Tab */}
           {activeTab === 'prompts' && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -283,7 +322,6 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
             </div>
           )}
 
-          {/* Documents Tab */}
           {activeTab === 'documents' && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -352,7 +390,6 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
             </div>
           )}
 
-          {/* Tools Tab */}
           {activeTab === 'tools' && (
             <div className="space-y-3">
               <h3 className="text-sm font-medium text-gray-900">Available Tools</h3>

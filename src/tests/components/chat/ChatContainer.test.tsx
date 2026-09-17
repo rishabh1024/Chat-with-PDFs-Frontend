@@ -3,12 +3,20 @@ import { render, screen, fireEvent, waitFor } from '../../../test-utils/testing-
 import userEvent from '@testing-library/user-event'
 import ChatContainer from '../../../components/chat/ChatContainer'
 import { chatService } from '../../../services/chatService'
+import { conversationService } from '../../../services/conversationService'
 import { documentService } from '../../../services/documentService'
+import { Conversation } from '../../../types/chat'
 
-// Mock the chat service
 vi.mock('../../../services/chatService', () => ({
   chatService: {
     sendMessage: vi.fn(),
+  },
+}))
+
+vi.mock('../../../services/conversationService', () => ({
+  conversationService: {
+    createConversation: vi.fn(),
+    listMessages: vi.fn(),
   },
 }))
 
@@ -18,79 +26,157 @@ vi.mock('../../../services/documentService', () => ({
   },
 }))
 
-const chatId = '123e4567-e89b-12d3-a456-426614174000'
+const conversationId = '123e4567-e89b-12d3-a456-426614174000'
+const createdConversation: Conversation = {
+  id: conversationId,
+  userId: '223e4567-e89b-12d3-a456-426614174000',
+  title: 'Hello, AI!',
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-01T00:00:00.000Z',
+}
 
-vi.mock('../../../utils/chatSession', () => ({
-  getOrCreateChatId: () => chatId,
-}))
+const defaultProps = {
+  conversationId: conversationId as string | null,
+  conversationTitle: 'Existing Chat' as string | null,
+  onConversationCreated: vi.fn(),
+  onConversationUpdated: vi.fn(),
+}
 
 describe('ChatContainer', () => {
   const mockSendMessage = vi.mocked(chatService.sendMessage)
+  const mockCreateConversation = vi.mocked(conversationService.createConversation)
+  const mockListMessages = vi.mocked(conversationService.listMessages)
   const mockUploadAndIndex = vi.mocked(documentService.uploadAndIndex)
 
   beforeEach(() => {
     mockSendMessage.mockClear()
+    mockCreateConversation.mockReset()
+    mockListMessages.mockReset()
+    mockListMessages.mockResolvedValue([])
     mockUploadAndIndex.mockReset()
+    defaultProps.onConversationCreated.mockClear()
+    defaultProps.onConversationUpdated.mockClear()
   })
 
-  it('renders the chat interface correctly', () => {
-    render(<ChatContainer />)
-    
-    expect(screen.getByText('AI Assistant')).toBeInTheDocument()
+  it('renders the chat interface correctly for an existing conversation', async () => {
+    render(<ChatContainer {...defaultProps} />)
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Existing Chat' })).toBeInTheDocument()
     expect(screen.getByText('Powered by FastAPI')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('Message AI Assistant...')).toBeInTheDocument()
-    expect(screen.getByText('How can I help you today?')).toBeInTheDocument()
+    expect(await screen.findByText('Messages for this chat will appear here. Send a message to continue the conversation.')).toBeInTheDocument()
+    expect(mockListMessages).toHaveBeenCalledWith(conversationId)
   })
 
-  it('displays welcome message when no messages exist', () => {
-    render(<ChatContainer />)
-    
+  it('loads and displays messages for a selected conversation', async () => {
+    mockListMessages.mockResolvedValue([
+      {
+        id: 'm1',
+        content: 'Saved user message',
+        role: 'user',
+        timestamp: new Date('2026-01-01T00:00:00.000Z'),
+      },
+      {
+        id: 'm2',
+        content: 'Saved AI reply',
+        role: 'assistant',
+        timestamp: new Date('2026-01-01T00:01:00.000Z'),
+      },
+    ])
+
+    render(<ChatContainer {...defaultProps} />)
+
+    expect(await screen.findByText('Saved user message')).toBeInTheDocument()
+    expect(screen.getByText('Saved AI reply')).toBeInTheDocument()
+  })
+
+  it('displays welcome message for a draft conversation', () => {
+    render(
+      <ChatContainer
+        {...defaultProps}
+        conversationId={null}
+        conversationTitle={null}
+      />
+    )
+
     expect(screen.getByText('How can I help you today?')).toBeInTheDocument()
     expect(screen.getByText('Start a conversation by typing a message below. I\'m here to assist you with any questions or tasks.')).toBeInTheDocument()
   })
 
-  it('allows user to type and send a message', async () => {
+  it('creates a conversation on first draft send then sends the message', async () => {
     const user = userEvent.setup()
+    mockCreateConversation.mockResolvedValue(createdConversation)
     mockSendMessage.mockResolvedValue({
-      chatId,
+      conversationId,
       message: 'Hello! How can I help you?',
-      history: ['Hello, AI!', 'Hello! How can I help you?'],
       success: true,
     })
 
-    render(<ChatContainer />)
-    
+    render(
+      <ChatContainer
+        {...defaultProps}
+        conversationId={null}
+        conversationTitle={null}
+      />
+    )
+
     const textarea = screen.getByPlaceholderText('Message AI Assistant...')
     const sendButton = screen.getByRole('button', { name: 'Send message' })
 
     await user.type(textarea, 'Hello, AI!')
     await user.click(sendButton)
 
-    expect(mockSendMessage).toHaveBeenCalledWith(chatId, 'Hello, AI!')
+    await waitFor(() => {
+      expect(mockCreateConversation).toHaveBeenCalledWith('Hello, AI!')
+    })
+    expect(mockSendMessage).toHaveBeenCalledWith(conversationId, 'Hello, AI!')
+    expect(defaultProps.onConversationCreated).toHaveBeenCalledWith(createdConversation)
+  })
+
+  it('allows user to type and send a message in an existing conversation', async () => {
+    const user = userEvent.setup()
+    mockSendMessage.mockResolvedValue({
+      conversationId,
+      message: 'Hello! How can I help you?',
+      success: true,
+    })
+
+    render(<ChatContainer {...defaultProps} />)
+    await screen.findByText('Messages for this chat will appear here. Send a message to continue the conversation.')
+
+    const textarea = screen.getByPlaceholderText('Message AI Assistant...')
+    const sendButton = screen.getByRole('button', { name: 'Send message' })
+
+    await user.type(textarea, 'Hello, AI!')
+    await user.click(sendButton)
+
+    expect(mockCreateConversation).not.toHaveBeenCalled()
+    expect(mockSendMessage).toHaveBeenCalledWith(conversationId, 'Hello, AI!')
   })
 
   it('sends message on Enter key press', async () => {
     const user = userEvent.setup()
     mockSendMessage.mockResolvedValue({
-      chatId,
+      conversationId,
       message: 'Response from AI',
-      history: ['Test message', 'Response from AI'],
       success: true,
     })
 
-    render(<ChatContainer />)
-    
+    render(<ChatContainer {...defaultProps} />)
+    await screen.findByText('Messages for this chat will appear here. Send a message to continue the conversation.')
+
     const textarea = screen.getByPlaceholderText('Message AI Assistant...')
 
     await user.type(textarea, 'Test message{enter}')
 
-    expect(mockSendMessage).toHaveBeenCalledWith(chatId, 'Test message')
+    expect(mockSendMessage).toHaveBeenCalledWith(conversationId, 'Test message')
   })
 
   it('prevents sending empty messages', async () => {
     const user = userEvent.setup()
-    render(<ChatContainer />)
-    
+    render(<ChatContainer {...defaultProps} />)
+    await screen.findByText('Messages for this chat will appear here. Send a message to continue the conversation.')
+
     const sendButton = screen.getByRole('button', { name: 'Send message' })
 
     await user.click(sendButton)
@@ -100,38 +186,33 @@ describe('ChatContainer', () => {
 
   it('shows loading state while sending message', async () => {
     const user = userEvent.setup()
-    mockSendMessage.mockImplementation(() => new Promise(resolve => 
+    mockSendMessage.mockImplementation(() => new Promise(resolve =>
       setTimeout(() => resolve({
-        chatId,
-        message: 'Response',
-        history: ['Test message', 'Response'],
+        conversationId,
+      message: 'Response',
         success: true,
       }), 100)
     ))
 
-    render(<ChatContainer />)
-    
+    render(<ChatContainer {...defaultProps} />)
+    await screen.findByText('Messages for this chat will appear here. Send a message to continue the conversation.')
+
     const textarea = screen.getByPlaceholderText('Message AI Assistant...')
     const sendButton = screen.getByRole('button', { name: 'Send message' })
 
     await user.type(textarea, 'Test message')
     await user.click(sendButton)
 
-    // Should show loading spinner on button
     expect(sendButton).toBeDisabled()
-    
-    // Should show loading dots
-    await waitFor(() => {
-      expect(screen.getAllByText('AI Assistant').length).toBeGreaterThan(0)
-    })
   })
 
   it('displays error message when API call fails', async () => {
     const user = userEvent.setup()
     mockSendMessage.mockRejectedValue(new Error('API Error'))
 
-    render(<ChatContainer />)
-    
+    render(<ChatContainer {...defaultProps} />)
+    await screen.findByText('Messages for this chat will appear here. Send a message to continue the conversation.')
+
     const textarea = screen.getByPlaceholderText('Message AI Assistant...')
     const sendButton = screen.getByRole('button', { name: 'Send message' })
 
@@ -148,8 +229,9 @@ describe('ChatContainer', () => {
     const user = userEvent.setup()
     mockSendMessage.mockRejectedValue(new Error('Test error'))
 
-    render(<ChatContainer />)
-    
+    render(<ChatContainer {...defaultProps} />)
+    await screen.findByText('Messages for this chat will appear here. Send a message to continue the conversation.')
+
     const textarea = screen.getByPlaceholderText('Message AI Assistant...')
     const sendButton = screen.getByRole('button', { name: 'Send message' })
 
@@ -168,12 +250,12 @@ describe('ChatContainer', () => {
 
   it('validates message length', async () => {
     const user = userEvent.setup()
-    render(<ChatContainer />)
-    
+    render(<ChatContainer {...defaultProps} />)
+    await screen.findByText('Messages for this chat will appear here. Send a message to continue the conversation.')
+
     const textarea = screen.getByPlaceholderText('Message AI Assistant...')
     const sendButton = screen.getByRole('button', { name: 'Send message' })
 
-    // Create a message longer than 4000 characters
     const longMessage = 'a'.repeat(4001)
     fireEvent.change(textarea, { target: { value: longMessage } })
     await user.click(sendButton)
@@ -188,39 +270,81 @@ describe('ChatContainer', () => {
   it('displays user and AI messages correctly', async () => {
     const user = userEvent.setup()
     mockSendMessage.mockResolvedValue({
-      chatId,
+      conversationId,
       message: 'AI response message',
-      history: ['User message', 'AI response message'],
       success: true,
     })
 
-    render(<ChatContainer />)
-    
+    render(<ChatContainer {...defaultProps} />)
+    await screen.findByText('Messages for this chat will appear here. Send a message to continue the conversation.')
+
     const textarea = screen.getByPlaceholderText('Message AI Assistant...')
     const sendButton = screen.getByRole('button', { name: 'Send message' })
 
     await user.type(textarea, 'User message')
     await user.click(sendButton)
 
-    // Check user message appears
     await waitFor(() => {
       expect(screen.getByText('User message')).toBeInTheDocument()
     })
 
-    // Check AI response appears
     await waitFor(() => {
       expect(screen.getByText('AI response message')).toBeInTheDocument()
     })
 
-    // Check role indicators
     expect(screen.getByText('You')).toBeInTheDocument()
     expect(screen.getAllByText('AI Assistant').length).toBeGreaterThan(0)
+  })
+
+  it('keeps in-session messages when switching conversations', async () => {
+    const user = userEvent.setup()
+    mockSendMessage.mockResolvedValue({
+      conversationId,
+      message: 'AI response message',
+      success: true,
+    })
+    mockListMessages
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+
+    const { rerender } = render(<ChatContainer {...defaultProps} />)
+    await screen.findByText('Messages for this chat will appear here. Send a message to continue the conversation.')
+
+    await waitFor(() => {
+      expect(mockListMessages).toHaveBeenCalledWith(conversationId)
+    })
+
+    await user.type(screen.getByPlaceholderText('Message AI Assistant...'), 'User message')
+    await user.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('AI response message')).toBeInTheDocument()
+    })
+
+    rerender(
+      <ChatContainer
+        {...defaultProps}
+        conversationId="other-chat"
+        conversationTitle="Other Chat"
+      />
+    )
+
+    await waitFor(() => {
+      expect(mockListMessages).toHaveBeenCalledWith('other-chat')
+    })
+    expect(screen.queryByText('User message')).not.toBeInTheDocument()
+    expect(await screen.findByText('Messages for this chat will appear here. Send a message to continue the conversation.')).toBeInTheDocument()
+
+    rerender(<ChatContainer {...defaultProps} />)
+
+    expect(screen.getByText('User message')).toBeInTheDocument()
+    expect(screen.getByText('AI response message')).toBeInTheDocument()
   })
 
   it('opens the attachment picker from the composer', async () => {
     const user = userEvent.setup()
     const inputClick = vi.spyOn(HTMLInputElement.prototype, 'click')
-    render(<ChatContainer />)
+    render(<ChatContainer {...defaultProps} />)
 
     await user.click(screen.getByRole('button', { name: 'Attach document' }))
 
@@ -238,7 +362,7 @@ describe('ChatContainer', () => {
       uploadError: null,
       indexingStatus: { vectorStore: 'Indexed' },
     })
-    render(<ChatContainer />)
+    render(<ChatContainer {...defaultProps} />)
 
     await user.upload(screen.getByTestId('chat-attachment-input'), file)
 
@@ -257,7 +381,7 @@ describe('ChatContainer', () => {
     mockUploadAndIndex.mockImplementation(() => new Promise(resolve => {
       finishUpload = resolve
     }))
-    render(<ChatContainer />)
+    render(<ChatContainer {...defaultProps} />)
 
     await user.upload(screen.getByTestId('chat-attachment-input'), file)
 
@@ -278,7 +402,7 @@ describe('ChatContainer', () => {
     const user = userEvent.setup()
     const file = new File(['document'], 'profile.pdf', { type: 'application/pdf' })
     mockUploadAndIndex.mockRejectedValue(new Error('Indexing service unavailable'))
-    render(<ChatContainer />)
+    render(<ChatContainer {...defaultProps} />)
 
     await user.upload(screen.getByTestId('chat-attachment-input'), file)
 
@@ -288,8 +412,8 @@ describe('ChatContainer', () => {
 
   it('allows new line with Shift+Enter', async () => {
     const user = userEvent.setup()
-    render(<ChatContainer />)
-    
+    render(<ChatContainer {...defaultProps} />)
+
     const textarea = screen.getByPlaceholderText('Message AI Assistant...')
 
     await user.type(textarea, 'Line 1')
@@ -300,3 +424,5 @@ describe('ChatContainer', () => {
     expect(mockSendMessage).not.toHaveBeenCalled()
   })
 })
+
+

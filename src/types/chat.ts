@@ -14,8 +14,15 @@ export interface ChatState {
 }
 
 export interface ChatResponse {
-  chatId: string;
+  conversationId: string;
   message: string;
-  history: string[];
   success: boolean;
+}
+
+export interface Conversation {
+  id: string;
+  userId: string;
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
 }

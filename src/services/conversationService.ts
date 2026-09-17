@@ -1,9 +1,29 @@
 import { apiConfig, getAuthHeaders } from '../config/api';
-import { API_ENDPOINTS, FILE_UPLOAD_CONFIG } from '../constants';
-import { DocumentRecord, IndexedDocumentUpload } from '../types/document';
-import { validateFile } from '../utils';
+import { API_ENDPOINTS } from '../constants';
+import { Conversation, Message } from '../types/chat';
+import { mapApiMessages } from '../utils/mapApiMessages';
 
-export class DocumentService {
+interface ConversationApiResponse {
+  id: string;
+  user_id: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ConversationListApiResponse {
+  conversations: ConversationApiResponse[];
+}
+
+const mapConversation = (data: ConversationApiResponse): Conversation => ({
+  id: data.id,
+  userId: data.user_id,
+  title: data.title,
+  createdAt: data.created_at,
+  updatedAt: data.updated_at,
+});
+
+export class ConversationService {
   private apiUrl: string;
   private timeout: number;
 
@@ -12,20 +32,12 @@ export class DocumentService {
     this.timeout = timeout;
   }
 
-  validateDocument(file: File): { isValid: boolean; error?: string } {
-    return validateFile(
-      file,
-      FILE_UPLOAD_CONFIG.ALLOWED_FILE_TYPES,
-      FILE_UPLOAD_CONFIG.MAX_FILE_SIZE
-    );
-  }
-
-  async listDocuments(): Promise<DocumentRecord[]> {
+  async listConversations(): Promise<Conversation[]> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      const response = await fetch(`${this.apiUrl}${API_ENDPOINTS.DOCUMENTS}`, {
+      const response = await fetch(`${this.apiUrl}${API_ENDPOINTS.CONVERSATIONS_ALL}`, {
         method: 'GET',
         headers: getAuthHeaders(),
         signal: controller.signal,
@@ -36,7 +48,13 @@ export class DocumentService {
         throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
 
-      return await response.json();
+      const data: ConversationListApiResponse = await response.json();
+
+      if (!data || !Array.isArray(data.conversations)) {
+        throw new Error('Invalid response format: missing conversations array');
+      }
+
+      return data.conversations.map(mapConversation);
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         throw new Error('Request timeout - please try again');
@@ -47,23 +65,19 @@ export class DocumentService {
     }
   }
 
-  async uploadDocument(file: File): Promise<DocumentRecord> {
-    const validation = this.validateDocument(file);
-    if (!validation.isValid) {
-      throw new Error(validation.error || 'Invalid file');
-    }
-
+  async createConversation(title?: string | null): Promise<Conversation> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
-    const formData = new FormData();
-    formData.append('file', file);
-
     try {
-      const response = await fetch(`${this.apiUrl}${API_ENDPOINTS.DOCUMENTS}`, {
+      const response = await fetch(`${this.apiUrl}${API_ENDPOINTS.CONVERSATIONS}`, {
         method: 'POST',
-        headers: getAuthHeaders(),
-        body: formData,
+        headers: getAuthHeaders({
+          'Content-Type': 'application/json',
+        }),
+        body: JSON.stringify({
+          title: title ?? 'New Conversation',
+        }),
         signal: controller.signal,
       });
 
@@ -72,7 +86,13 @@ export class DocumentService {
         throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
 
-      return await response.json();
+      const data: ConversationApiResponse = await response.json();
+
+      if (!data?.id || !data?.user_id || !data?.created_at || !data?.updated_at) {
+        throw new Error('Invalid response format: missing conversation fields');
+      }
+
+      return mapConversation(data);
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         throw new Error('Request timeout - please try again');
@@ -83,24 +103,19 @@ export class DocumentService {
     }
   }
 
-  async uploadAndIndex(file: File): Promise<IndexedDocumentUpload> {
-    const validation = this.validateDocument(file);
-    if (!validation.isValid) {
-      throw new Error(validation.error || 'Invalid file');
-    }
-
+  async listMessages(conversationId: string): Promise<Message[]> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-    const formData = new FormData();
-    formData.append('input_file', file);
 
     try {
-      const response = await fetch(`${this.apiUrl}${API_ENDPOINTS.UPLOAD_AND_INDEX}`, {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: formData,
-        signal: controller.signal,
-      });
+      const response = await fetch(
+        `${this.apiUrl}${API_ENDPOINTS.CONVERSATION_MESSAGES_LIST(conversationId)}`,
+        {
+          method: 'GET',
+          headers: getAuthHeaders(),
+          signal: controller.signal,
+        }
+      );
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => 'Unknown error');
@@ -108,23 +123,7 @@ export class DocumentService {
       }
 
       const data = await response.json();
-
-      if (
-        !data.document_id ||
-        !data.file_hash ||
-        !data.upload_status ||
-        typeof data.document_indexing_status !== 'object'
-      ) {
-        throw new Error('Invalid upload response format');
-      }
-
-      return {
-        documentId: data.document_id,
-        fileHash: data.file_hash,
-        uploadStatus: data.upload_status,
-        uploadError: data.upload_error ?? null,
-        indexingStatus: data.document_indexing_status,
-      };
+      return mapApiMessages(data);
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         throw new Error('Request timeout - please try again');
@@ -135,12 +134,12 @@ export class DocumentService {
     }
   }
 
-  async deleteDocument(documentId: string): Promise<void> {
+  async deleteConversation(id: string): Promise<void> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      const response = await fetch(`${this.apiUrl}${API_ENDPOINTS.DOCUMENTS}/${documentId}`, {
+      const response = await fetch(`${this.apiUrl}${API_ENDPOINTS.CONVERSATION(id)}`, {
         method: 'DELETE',
         headers: getAuthHeaders(),
         signal: controller.signal,
@@ -169,4 +168,4 @@ export class DocumentService {
   }
 }
 
-export const documentService = new DocumentService();
+export const conversationService = new ConversationService();

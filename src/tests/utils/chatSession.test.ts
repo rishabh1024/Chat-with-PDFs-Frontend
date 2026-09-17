@@ -1,27 +1,59 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getOrCreateChatId } from '../../utils/chatSession';
+import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  getStoredActiveConversationId,
+  resolveActiveConversationId,
+  setStoredActiveConversationId,
+} from '../../utils/chatSession';
 
-describe('getOrCreateChatId', () => {
+describe('chatSession', () => {
   beforeEach(() => {
     window.localStorage.clear();
   });
 
-  it('returns an existing chat id from localStorage', () => {
-    window.localStorage.setItem('chat_id', 'existing-chat-id');
+  describe('getStoredActiveConversationId / setStoredActiveConversationId', () => {
+    it('returns null when nothing is stored', () => {
+      expect(getStoredActiveConversationId()).toBeNull();
+    });
 
-    expect(getOrCreateChatId()).toBe('existing-chat-id');
+    it('stores and retrieves an active conversation id', () => {
+      setStoredActiveConversationId('chat-123');
+      expect(getStoredActiveConversationId()).toBe('chat-123');
+      expect(window.localStorage.getItem('active_conversation_id')).toBe('chat-123');
+    });
+
+    it('clears the stored id when set to null', () => {
+      setStoredActiveConversationId('chat-123');
+      setStoredActiveConversationId(null);
+      expect(getStoredActiveConversationId()).toBeNull();
+      expect(window.localStorage.getItem('active_conversation_id')).toBeNull();
+    });
   });
 
-  it('generates and stores a chat id when one does not exist', () => {
-    const randomUUID = vi
-      .spyOn(crypto, 'randomUUID')
-      .mockReturnValue('123e4567-e89b-12d3-a456-426614174000');
+  describe('resolveActiveConversationId', () => {
+    const conversations = [
+      {
+        id: 'older',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'newer',
+        updatedAt: '2026-01-03T00:00:00.000Z',
+      },
+    ];
 
-    expect(getOrCreateChatId()).toBe('123e4567-e89b-12d3-a456-426614174000');
-    expect(window.localStorage.getItem('chat_id')).toBe(
-      '123e4567-e89b-12d3-a456-426614174000'
-    );
+    it('returns the stored id when it exists in the list', () => {
+      setStoredActiveConversationId('older');
+      expect(resolveActiveConversationId(conversations)).toBe('older');
+    });
 
-    randomUUID.mockRestore();
+    it('falls back to the most recently updated conversation', () => {
+      setStoredActiveConversationId('missing');
+      expect(resolveActiveConversationId(conversations)).toBe('newer');
+    });
+
+    it('returns null when there are no conversations', () => {
+      setStoredActiveConversationId('anything');
+      expect(resolveActiveConversationId([])).toBeNull();
+    });
   });
 });

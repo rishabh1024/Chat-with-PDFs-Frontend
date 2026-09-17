@@ -1,23 +1,43 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Message, ChatState } from '../../types/chat';
+import React, { useEffect, useRef, useState } from 'react';
+import { Conversation, Message, ChatState } from '../../types/chat';
 import { chatService } from '../../services/chatService';
+import { conversationService } from '../../services/conversationService';
 import { documentService } from '../../services/documentService';
 import { FILE_UPLOAD_CONFIG } from '../../constants';
 import { IndexedDocumentUpload } from '../../types/document';
 import { generateUniqueId, validateMessage } from '../../utils';
-import { getOrCreateChatId } from '../../utils/chatSession';
 import MessageComponent from './Message';
 import LoadingDots from './LoadingDots';
 
-const ChatContainer: React.FC = () => {
+const DRAFT_CACHE_KEY = '__draft__';
+const TITLE_MAX_LENGTH = 60;
+
+interface ChatContainerProps {
+  conversationId: string | null;
+  conversationTitle: string | null;
+  onConversationCreated: (conversation: Conversation) => void;
+  onConversationUpdated: (conversation: Conversation) => void;
+}
+
+const buildTitleFromMessage = (message: string): string => {
+  const trimmed = message.trim();
+  if (!trimmed) return 'New Conversation';
+  if (trimmed.length <= TITLE_MAX_LENGTH) return trimmed;
+  return `${trimmed.slice(0, TITLE_MAX_LENGTH).trimEnd()}...`;
+};
+
+const ChatContainer: React.FC<ChatContainerProps> = ({
+  conversationId,
+  conversationTitle,
+  onConversationCreated,
+  onConversationUpdated,
+}) => {
   const [chatState, setChatState] = useState<ChatState>({
     messages: [],
     isLoading: false,
     error: null,
   });
-  
   const [inputValue, setInputValue] = useState('');
-  const [chatId] = useState(getOrCreateChatId);
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachment, setAttachment] = useState<{
@@ -26,6 +46,90 @@ const ChatContainer: React.FC = () => {
   } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const messageCacheRef = useRef<Map<string, Message[]>>(new Map());
+  const previousConversationKeyRef = useRef<string>(DRAFT_CACHE_KEY);
+  const messagesRef = useRef<Message[]>([]);
+
+  const conversationCacheKey = conversationId ?? DRAFT_CACHE_KEY;
+  const displayTitle = conversationId
+    ? conversationTitle ?? 'New Conversation'
+    : 'New Conversation';
+
+  useEffect(() => {
+    messagesRef.current = chatState.messages;
+  }, [chatState.messages]);
+
+  useEffect(() => {
+    const previousKey = previousConversationKeyRef.current;
+
+    if (previousKey === conversationCacheKey) {
+      return;
+    }
+
+    messageCacheRef.current.set(previousKey, messagesRef.current);
+
+    // Discard unused draft when switching to a real conversation
+    if (previousKey === DRAFT_CACHE_KEY && conversationId) {
+      messageCacheRef.current.set(DRAFT_CACHE_KEY, []);
+    }
+
+    previousConversationKeyRef.current = conversationCacheKey;
+
+    if (messageCacheRef.current.has(conversationCacheKey)) {
+      setChatState((prev) => ({
+        ...prev,
+        messages: messageCacheRef.current.get(conversationCacheKey) ?? [],
+        error: null,
+        isLoading: false,
+      }));
+      return;
+    }
+
+    if (!conversationId) {
+      messageCacheRef.current.set(DRAFT_CACHE_KEY, []);
+      setChatState((prev) => ({
+        ...prev,
+        messages: [],
+        error: null,
+        isLoading: false,
+      }));
+      return;
+    }
+
+    let cancelled = false;
+    setChatState((prev) => ({
+      ...prev,
+      messages: [],
+      error: null,
+      isLoading: true,
+    }));
+
+    conversationService
+      .listMessages(conversationId)
+      .then((messages) => {
+        if (cancelled) return;
+        messageCacheRef.current.set(conversationCacheKey, messages);
+        setChatState((prev) => ({
+          ...prev,
+          messages,
+          isLoading: false,
+        }));
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        messageCacheRef.current.set(conversationCacheKey, []);
+        setChatState((prev) => ({
+          ...prev,
+          messages: [],
+          isLoading: false,
+          error: error instanceof Error ? error.message : 'Failed to load messages',
+        }));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationCacheKey, conversationId]);
 
   const scrollToBottom = () => {
     if (typeof messagesEndRef.current?.scrollIntoView === 'function') {
@@ -36,13 +140,17 @@ const ChatContainer: React.FC = () => {
   useEffect(() => {
     scrollToBottom();
   }, [chatState.messages, chatState.isLoading]);
+
+  const persistMessages = (messages: Message[], cacheKey: string = conversationCacheKey) => {
+    messageCacheRef.current.set(cacheKey, messages);
+  };
+
   const handleSendMessage = async () => {
     if (!inputValue.trim() || chatState.isLoading) return;
 
-    // Validate message using utility
     const validation = validateMessage(inputValue);
     if (!validation.isValid) {
-      setChatState(prev => ({
+      setChatState((prev) => ({
         ...prev,
         error: validation.error || 'Invalid message',
       }));
@@ -56,17 +164,32 @@ const ChatContainer: React.FC = () => {
       timestamp: new Date(),
     };
 
-    setChatState(prev => ({
+    const messagesWithUser = [...chatState.messages, userMessage];
+    persistMessages(messagesWithUser);
+    setChatState((prev) => ({
       ...prev,
-      messages: [...prev.messages, userMessage],
+      messages: messagesWithUser,
       isLoading: true,
       error: null,
     }));
-
     setInputValue('');
 
     try {
-      const response = await chatService.sendMessage(chatId, userMessage.content);
+      let activeChatId = conversationId;
+      let createdConversation: Conversation | null = null;
+
+      if (!activeChatId) {
+        createdConversation = await conversationService.createConversation(
+          buildTitleFromMessage(userMessage.content)
+        );
+        activeChatId = createdConversation.id;
+        persistMessages(messagesWithUser, activeChatId);
+        messageCacheRef.current.set(DRAFT_CACHE_KEY, []);
+        previousConversationKeyRef.current = activeChatId;
+        onConversationCreated(createdConversation);
+      }
+
+      const response = await chatService.sendMessage(activeChatId, userMessage.content);
       const botMessage: Message = {
         id: generateUniqueId(),
         content: response.message || 'Sorry, I received an empty response.',
@@ -74,14 +197,31 @@ const ChatContainer: React.FC = () => {
         timestamp: new Date(),
       };
 
-      setChatState(prev => ({
+      const messagesWithBot = [...messagesWithUser, botMessage];
+      persistMessages(messagesWithBot, activeChatId);
+      setChatState((prev) => ({
         ...prev,
-        messages: [...prev.messages, botMessage],
+        messages: messagesWithBot,
         isLoading: false,
       }));
 
+      const now = new Date().toISOString();
+      if (createdConversation) {
+        onConversationUpdated({
+          ...createdConversation,
+          updatedAt: now,
+        });
+      } else if (conversationId) {
+        onConversationUpdated({
+          id: conversationId,
+          userId: '',
+          title: conversationTitle,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
     } catch (error) {
-      setChatState(prev => ({
+      setChatState((prev) => ({
         ...prev,
         isLoading: false,
         error: error instanceof Error ? error.message : 'An unexpected error occurred',
@@ -97,7 +237,7 @@ const ChatContainer: React.FC = () => {
   };
 
   const clearError = () => {
-    setChatState(prev => ({ ...prev, error: null }));
+    setChatState((prev) => ({ ...prev, error: null }));
   };
 
   const handleAttachmentClick = () => {
@@ -135,17 +275,21 @@ const ChatContainer: React.FC = () => {
     setAttachmentError(null);
   };
 
+  const isDraft = conversationId === null;
+  const showSelectedEmptyPlaceholder =
+    !isDraft && chatState.messages.length === 0 && !chatState.isLoading;
+
   return (
-    <div className="h-screen bg-white flex flex-col">
-      {/* Header */}
+    <div className="h-full bg-white flex flex-col">
       <div className="flex-shrink-0 border-b border-gray-200 bg-white">
         <div className="max-w-4xl mx-auto px-4 py-4">
-          <h1 className="text-lg font-semibold text-gray-900">AI Assistant</h1>
-          <p className="text-sm text-gray-600">Powered by FastAPI</p>
+          <h1 className="text-lg font-semibold text-gray-900">{displayTitle}</h1>
+          <p className="text-sm text-gray-600">
+            {isDraft ? 'Start typing to create a new conversation' : 'Powered by FastAPI'}
+          </p>
         </div>
       </div>
 
-      {/* Error Banner */}
       {chatState.error && (
         <div className="flex-shrink-0 bg-red-50 border-b border-red-200">
           <div className="max-w-4xl mx-auto px-4 py-3">
@@ -166,36 +310,48 @@ const ChatContainer: React.FC = () => {
         </div>
       )}
 
-      {/* Main Chat Area */}
       <div className="flex-1 overflow-hidden">
         <div className="h-full max-w-4xl mx-auto flex flex-col">
-          {/* Messages Container */}
           <div className="flex-1 overflow-y-auto px-4 py-6">
-            {chatState.messages.length === 0 ? (
+            {chatState.isLoading && chatState.messages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full">
+                <LoadingDots />
+              </div>
+            ) : chatState.messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
                 <div className="w-16 h-16 bg-gradient-to-br from-primary-500 to-accent-500 rounded-full flex items-center justify-center mb-6">
                   <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                   </svg>
                 </div>
-                <h2 className="text-2xl font-semibold text-gray-900 mb-2">How can I help you today?</h2>
-                <p className="text-gray-600 max-w-md">
-                  Start a conversation by typing a message below. I'm here to assist you with any questions or tasks.
-                </p>
+                {showSelectedEmptyPlaceholder ? (
+                  <>
+                    <h2 className="text-2xl font-semibold text-gray-900 mb-2">{displayTitle}</h2>
+                    <p className="text-gray-600 max-w-md">
+                      Messages for this chat will appear here. Send a message to continue the conversation.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <h2 className="text-2xl font-semibold text-gray-900 mb-2">How can I help you today?</h2>
+                    <p className="text-gray-600 max-w-md">
+                      Start a conversation by typing a message below. I&apos;m here to assist you with any questions or tasks.
+                    </p>
+                  </>
+                )}
               </div>
             ) : (
               <div className="space-y-6">
                 {chatState.messages.map((message) => (
                   <MessageComponent key={message.id} message={message} />
                 ))}
-                
+
                 {chatState.isLoading && <LoadingDots />}
                 <div ref={messagesEndRef} />
               </div>
             )}
           </div>
 
-          {/* Input Area */}
           <div className="flex-shrink-0 border-t border-gray-200 bg-white">
             <div className="px-4 py-4">
               {attachment && (
@@ -289,7 +445,8 @@ const ChatContainer: React.FC = () => {
           </div>
         </div>
       </div>
-    </div>  );
+    </div>
+  );
 };
 
 export default ChatContainer;

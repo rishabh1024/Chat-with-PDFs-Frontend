@@ -54,10 +54,11 @@ describe('DocumentService', () => {
 
       expect(mockFetch).toHaveBeenCalledWith(
         'http://localhost:8000/documents',
-        {
+        expect.objectContaining({
           method: 'GET',
+          headers: expect.any(Object),
           signal: expect.any(AbortSignal),
-        }
+        })
       )
       expect(result).toEqual(mockDocuments)
     })
@@ -131,7 +132,7 @@ describe('DocumentService', () => {
       const result = await documentService.uploadAndIndex(file)
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:8000/upload_and_index',
+        'http://localhost:8000/upload/',
         expect.objectContaining({
           method: 'POST',
           body: expect.any(FormData),
@@ -172,10 +173,11 @@ describe('DocumentService', () => {
 
       expect(mockFetch).toHaveBeenCalledWith(
         'http://localhost:8000/documents/doc-1',
-        {
+        expect.objectContaining({
           method: 'DELETE',
+          headers: expect.any(Object),
           signal: expect.any(AbortSignal),
-        }
+        })
       )
     })
 

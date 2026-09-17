@@ -1,5 +1,5 @@
 import { ChatResponse } from '../types/chat';
-import { apiConfig } from '../config/api';
+import { apiConfig, getAuthHeaders } from '../config/api';
 import { API_ENDPOINTS } from '../constants';
 
 export class ChatService {
@@ -11,17 +11,22 @@ export class ChatService {
     this.timeout = timeout;
   }
 
-  async sendMessage(chatId: string, message: string): Promise<ChatResponse> {
+  async sendMessage(conversationId: string, message: string): Promise<ChatResponse> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-    const query = new URLSearchParams({ message_query: message });
 
     try {
       const response = await fetch(
-        `${this.apiUrl}${API_ENDPOINTS.CHAT_MESSAGE(chatId)}?${query.toString()}`,
+        `${this.apiUrl}${API_ENDPOINTS.CONVERSATION_MESSAGES(conversationId)}`,
         {
-        method: 'POST',
-        signal: controller.signal,
+          method: 'POST',
+          headers: getAuthHeaders({
+            'Content-Type': 'application/json',
+          }),
+          body: JSON.stringify({
+            message_content: message,
+          }),
+          signal: controller.signal,
         }
       );
 
@@ -31,15 +36,14 @@ export class ChatService {
       }
 
       const data = await response.json();
-      
-      if (!data.chat_id || !data.ai_message || !Array.isArray(data.chat_history_messages)) {
+
+      if (!data.conversation_id || typeof data.content !== 'string') {
         throw new Error('Invalid response format: missing chat response fields');
       }
-      
+
       return {
-        chatId: data.chat_id,
-        message: data.ai_message,
-        history: data.chat_history_messages,
+        conversationId: data.conversation_id,
+        message: data.content,
         success: true,
       };
     } catch (error) {
@@ -53,11 +57,11 @@ export class ChatService {
       ) {
         throw new Error('Request timeout - please try again');
       }
-      
+
       if (error instanceof Error) {
         throw error;
       }
-      
+
       throw new Error('Unknown error occurred');
     } finally {
       clearTimeout(timeoutId);

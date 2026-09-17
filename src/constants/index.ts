@@ -13,8 +13,16 @@ export const UI_CONSTANTS = {
 } as const;
 
 export const API_ENDPOINTS = {
-  CHAT_MESSAGE: (chatId: string) => `/chat/conversation/${chatId}/messages/`,
-  UPLOAD_AND_INDEX: '/upload_and_index',
+  CONVERSATIONS: '/conversations',
+  CONVERSATIONS_ALL: '/conversations',
+  CONVERSATION: (id: string) => `/conversations/${id}`,
+  CONVERSATION_MESSAGES: (conversationId: string) =>
+    `/conversations/${conversationId}/messages`,
+  CONVERSATION_MESSAGES_LIST: (conversationId: string) =>
+    `/conversations/${conversationId}/messages`,
+  UPLOAD_AND_INDEX: '/upload/',
+  INDEX_STATUS_EVENTS: (documentId: string) =>
+    `/upload/index_status/${documentId}/events`,
   HEALTH: '/health',
   DOCUMENTS: '/documents',
 } as const;

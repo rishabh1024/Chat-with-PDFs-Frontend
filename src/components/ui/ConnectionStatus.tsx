@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getAuthHeaders } from '../../config/api';
 import { chatService } from '../../services/chatService';
 
 type ConnectionStatus = 'connected' | 'disconnected' | 'checking';
@@ -13,6 +14,7 @@ const ConnectionStatus: React.FC = () => {
       // Simple health check - you might want to implement a dedicated endpoint
       const response = await fetch(`${chatService.getApiUrl()}/health`, {
         method: 'GET',
+        headers: getAuthHeaders(),
         signal: AbortSignal.timeout(5000),
       });
       
