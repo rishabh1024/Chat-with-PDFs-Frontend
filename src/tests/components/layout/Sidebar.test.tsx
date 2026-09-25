@@ -54,7 +54,7 @@ describe('Sidebar', () => {
   it('renders sidebar with tabs', () => {
     render(<Sidebar {...defaultProps} />)
 
-    expect(screen.getByText('AI Assistant')).toBeInTheDocument()
+    expect(screen.getByLabelText('Chat with PDFs')).toBeInTheDocument()
     expect(screen.getByText('Docs')).toBeInTheDocument()
     expect(screen.getByText('History')).toBeInTheDocument()
   })

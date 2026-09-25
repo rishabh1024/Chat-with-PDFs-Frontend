@@ -1,0 +1,6 @@
+<svg width="48" height="56" viewBox="0 0 48 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M6 6C6 3.79086 7.79086 2 10 2H30L42 14V42C42 44.2091 40.2091 46 38 46H16L6 54V6Z" fill="#E55545"/>
+  <path d="M30 2L42 14H34C31.7909 14 30 12.2091 30 10V2Z" fill="#C94436"/>
+  <path d="M17 11L18.6 16.4L24 18L18.6 19.6L17 25L15.4 19.6L10 18L15.4 16.4L17 11Z" fill="white"/>
+  <text x="24" y="38" text-anchor="middle" fill="white" font-size="12" font-weight="700" font-family="Geist, ui-sans-serif, system-ui, sans-serif" letter-spacing="0.6">PDF</text>
+</svg>

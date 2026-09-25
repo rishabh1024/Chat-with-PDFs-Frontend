@@ -1,4 +1,4 @@
-import { apiConfig, getAuthHeaders } from '../config/api';
+import { apiConfig, apiFetch, getAuthHeaders } from '../config/api';
 import { API_ENDPOINTS } from '../constants';
 import { Conversation, Message } from '../types/chat';
 import { mapApiMessages } from '../utils/mapApiMessages';
@@ -37,7 +37,7 @@ export class ConversationService {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      const response = await fetch(`${this.apiUrl}${API_ENDPOINTS.CONVERSATIONS_ALL}`, {
+      const response = await apiFetch(`${this.apiUrl}${API_ENDPOINTS.CONVERSATIONS_ALL}`, {
         method: 'GET',
         headers: getAuthHeaders(),
         signal: controller.signal,
@@ -70,7 +70,7 @@ export class ConversationService {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      const response = await fetch(`${this.apiUrl}${API_ENDPOINTS.CONVERSATIONS}`, {
+      const response = await apiFetch(`${this.apiUrl}${API_ENDPOINTS.CONVERSATIONS}`, {
         method: 'POST',
         headers: getAuthHeaders({
           'Content-Type': 'application/json',
@@ -108,7 +108,7 @@ export class ConversationService {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${this.apiUrl}${API_ENDPOINTS.CONVERSATION_MESSAGES_LIST(conversationId)}`,
         {
           method: 'GET',
@@ -139,7 +139,7 @@ export class ConversationService {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      const response = await fetch(`${this.apiUrl}${API_ENDPOINTS.CONVERSATION(id)}`, {
+      const response = await apiFetch(`${this.apiUrl}${API_ENDPOINTS.CONVERSATION(id)}`, {
         method: 'DELETE',
         headers: getAuthHeaders(),
         signal: controller.signal,

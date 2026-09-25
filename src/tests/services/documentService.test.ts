@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { setAccessToken } from '../../config/api'
 import { DocumentService } from '../../services/documentService'
 
 const mockFetch = vi.fn()
@@ -8,8 +9,13 @@ describe('DocumentService', () => {
   let documentService: DocumentService
 
   beforeEach(() => {
+    setAccessToken('test-access-token')
     documentService = new DocumentService('http://localhost:8000', 5000)
     mockFetch.mockClear()
+  })
+
+  afterEach(() => {
+    setAccessToken(null)
   })
 
   describe('validateDocument', () => {

@@ -3,6 +3,7 @@ import { FILE_UPLOAD_CONFIG } from '../../constants';
 import { documentService } from '../../services/documentService';
 import { Conversation } from '../../types/chat';
 import { DocumentRecord } from '../../types/document';
+import Logo from '../brand/Logo';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -193,7 +194,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         isOpen ? 'translate-x-0' : '-translate-x-full'
       }`} style={{ width: '320px' }}>
         <div className="flex items-center justify-between p-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">AI Assistant</h2>
+          <Logo size={36} className="text-[13px]" />
           <button
             onClick={onToggle}
             className="p-1 rounded-md hover:bg-gray-100 transition-colors"

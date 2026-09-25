@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { getAuthHeaders } from '../../config/api';
 import { chatService } from '../../services/chatService';
 
 type ConnectionStatus = 'connected' | 'disconnected' | 'checking';
@@ -11,15 +10,15 @@ const ConnectionStatus: React.FC = () => {
   const checkConnection = async () => {
     setStatus('checking');
     try {
-      // Simple health check - you might want to implement a dedicated endpoint
+      // Public health probe — do not require (or send) a session token.
       const response = await fetch(`${chatService.getApiUrl()}/health`, {
         method: 'GET',
-        headers: getAuthHeaders(),
         signal: AbortSignal.timeout(5000),
       });
-      
+
       if (response.ok) {
-        setStatus('connected');      } else {
+        setStatus('connected');
+      } else {
         setStatus('disconnected');
       }
     } catch {
@@ -31,25 +30,33 @@ const ConnectionStatus: React.FC = () => {
 
   useEffect(() => {
     checkConnection();
-    const interval = setInterval(checkConnection, 30000); // Check every 30 seconds
+    const interval = setInterval(checkConnection, 30000);
     return () => clearInterval(interval);
   }, []);
 
   const getStatusColor = () => {
     switch (status) {
-      case 'connected': return 'bg-green-500';
-      case 'disconnected': return 'bg-red-500';
-      case 'checking': return 'bg-yellow-500';
-      default: return 'bg-gray-500';
+      case 'connected':
+        return 'bg-green-500';
+      case 'disconnected':
+        return 'bg-red-500';
+      case 'checking':
+        return 'bg-yellow-500';
+      default:
+        return 'bg-gray-500';
     }
   };
 
   const getStatusText = () => {
     switch (status) {
-      case 'connected': return 'Connected';
-      case 'disconnected': return 'Disconnected';
-      case 'checking': return 'Checking...';
-      default: return 'Unknown';
+      case 'connected':
+        return 'Connected';
+      case 'disconnected':
+        return 'Disconnected';
+      case 'checking':
+        return 'Checking...';
+      default:
+        return 'Unknown';
     }
   };
 

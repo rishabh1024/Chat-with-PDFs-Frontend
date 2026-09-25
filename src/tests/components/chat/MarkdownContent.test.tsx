@@ -41,6 +41,13 @@ describe('MarkdownContent', () => {
     expect(link).toHaveAttribute('rel', 'noopener noreferrer')
   })
 
+  it('does not render javascript: links as anchors', () => {
+    render(<MarkdownContent content="Click [bad](javascript:alert(1))" />)
+
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+    expect(screen.getByText('bad')).toBeInTheDocument()
+  })
+
   it('renders inline code with monospace styling', () => {
     render(<MarkdownContent content="Use `npm install` to install" />)
 

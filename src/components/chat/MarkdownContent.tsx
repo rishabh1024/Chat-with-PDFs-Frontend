@@ -26,16 +26,25 @@ const markdownComponents: Components = {
     </ol>
   ),
   li: ({ children }) => <li className="leading-relaxed">{children}</li>,
-  a: ({ href, children }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="underline underline-offset-2 hover:opacity-80"
-    >
-      {children}
-    </a>
-  ),
+  a: ({ href, children }) => {
+    const safeHref =
+      typeof href === 'string' && /^https?:\/\//i.test(href) ? href : undefined;
+
+    if (!safeHref) {
+      return <span>{children}</span>;
+    }
+
+    return (
+      <a
+        href={safeHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="underline underline-offset-2 hover:opacity-80"
+      >
+        {children}
+      </a>
+    );
+  },
   code: ({ className, children, ...props }) => {
     const isBlock = Boolean(className?.includes('language-'));
 

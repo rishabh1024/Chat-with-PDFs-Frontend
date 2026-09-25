@@ -7,6 +7,21 @@ import { conversationService } from '../../../services/conversationService'
 import { documentService } from '../../../services/documentService'
 import { Conversation } from '../../../types/chat'
 
+vi.mock('../../../auth/AuthContext', () => ({
+  useAuth: () => ({
+    session: { access_token: 'token' },
+    user: {
+      id: 'user-1',
+      email: 'alex@example.com',
+      user_metadata: { name: 'Alex Rivera', full_name: 'Alex Rivera' },
+    },
+    loading: false,
+    signIn: vi.fn(),
+    signUp: vi.fn(),
+    signOut: vi.fn(),
+  }),
+}))
+
 vi.mock('../../../services/chatService', () => ({
   chatService: {
     sendMessage: vi.fn(),
@@ -99,7 +114,7 @@ describe('ChatContainer', () => {
       />
     )
 
-    expect(screen.getByText('How can I help you today?')).toBeInTheDocument()
+    expect(screen.getByText('Hello Alex')).toBeInTheDocument()
     expect(screen.getByText('Start a conversation by typing a message below. I\'m here to assist you with any questions or tasks.')).toBeInTheDocument()
   })
 

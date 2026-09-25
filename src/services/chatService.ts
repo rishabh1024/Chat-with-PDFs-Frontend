@@ -1,5 +1,5 @@
 import { ChatResponse } from '../types/chat';
-import { apiConfig, getAuthHeaders } from '../config/api';
+import { apiConfig, apiFetch, getAuthHeaders } from '../config/api';
 import { API_ENDPOINTS } from '../constants';
 
 export class ChatService {
@@ -16,7 +16,7 @@ export class ChatService {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${this.apiUrl}${API_ENDPOINTS.CONVERSATION_MESSAGES(conversationId)}`,
         {
           method: 'POST',

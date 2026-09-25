@@ -1,4 +1,4 @@
-import { apiConfig, getAuthHeaders } from '../config/api';
+import { apiConfig, apiFetch, getAuthHeaders } from '../config/api';
 import { API_ENDPOINTS, FILE_UPLOAD_CONFIG } from '../constants';
 import { DocumentRecord, IndexedDocumentUpload } from '../types/document';
 import { validateFile } from '../utils';
@@ -25,7 +25,7 @@ export class DocumentService {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      const response = await fetch(`${this.apiUrl}${API_ENDPOINTS.DOCUMENTS}`, {
+      const response = await apiFetch(`${this.apiUrl}${API_ENDPOINTS.DOCUMENTS}`, {
         method: 'GET',
         headers: getAuthHeaders(),
         signal: controller.signal,
@@ -60,7 +60,7 @@ export class DocumentService {
     formData.append('file', file);
 
     try {
-      const response = await fetch(`${this.apiUrl}${API_ENDPOINTS.DOCUMENTS}`, {
+      const response = await apiFetch(`${this.apiUrl}${API_ENDPOINTS.DOCUMENTS}`, {
         method: 'POST',
         headers: getAuthHeaders(),
         body: formData,
@@ -95,7 +95,7 @@ export class DocumentService {
     formData.append('input_file', file);
 
     try {
-      const response = await fetch(`${this.apiUrl}${API_ENDPOINTS.UPLOAD_AND_INDEX}`, {
+      const response = await apiFetch(`${this.apiUrl}${API_ENDPOINTS.UPLOAD_AND_INDEX}`, {
         method: 'POST',
         headers: getAuthHeaders(),
         body: formData,
@@ -140,7 +140,7 @@ export class DocumentService {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      const response = await fetch(`${this.apiUrl}${API_ENDPOINTS.DOCUMENTS}/${documentId}`, {
+      const response = await apiFetch(`${this.apiUrl}${API_ENDPOINTS.DOCUMENTS}/${documentId}`, {
         method: 'DELETE',
         headers: getAuthHeaders(),
         signal: controller.signal,

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { setAccessToken } from '../../config/api'
 import { ConversationService } from '../../services/conversationService'
 
 const mockFetch = vi.fn()
@@ -19,11 +20,13 @@ describe('ConversationService', () => {
   let conversationService: ConversationService
 
   beforeEach(() => {
+    setAccessToken('test-access-token')
     conversationService = new ConversationService('http://localhost:8000', 5000)
     mockFetch.mockClear()
   })
 
   afterEach(() => {
+    setAccessToken(null)
     vi.clearAllTimers()
   })
 
