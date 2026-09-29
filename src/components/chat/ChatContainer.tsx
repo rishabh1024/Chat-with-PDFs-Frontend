@@ -14,6 +14,7 @@ import LoadingDots from './LoadingDots';
 
 const DRAFT_CACHE_KEY = '__draft__';
 const TITLE_MAX_LENGTH = 60;
+const SCROLL_BOTTOM_THRESHOLD_PX = 48;
 
 interface ChatContainerProps {
   conversationId: string | null;
@@ -48,11 +49,16 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
     fileName: string;
     upload: IndexedDocumentUpload;
   } | null>(null);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const messagesContentRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messageCacheRef = useRef<Map<string, Message[]>>(new Map());
   const previousConversationKeyRef = useRef<string>(DRAFT_CACHE_KEY);
   const messagesRef = useRef<Message[]>([]);
+  const isPinnedToBottomRef = useRef(true);
+  const isGeneratingRef = useRef(false);
 
   const conversationCacheKey = conversationId ?? DRAFT_CACHE_KEY;
   const displayTitle = conversationId
@@ -136,15 +142,94 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
     };
   }, [conversationCacheKey, conversationId]);
 
-  const scrollToBottom = () => {
-    if (typeof messagesEndRef.current?.scrollIntoView === 'function') {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+  const getDistanceFromBottom = () => {
+    const container = messagesContainerRef.current;
+    if (!container) return 0;
+    return container.scrollHeight - container.scrollTop - container.clientHeight;
+  };
+
+  const updateScrollToBottomVisibility = () => {
+    const container = messagesContainerRef.current;
+    if (!container) {
+      setShowScrollToBottom(false);
+      isPinnedToBottomRef.current = true;
+      return;
+    }
+
+    const distanceFromBottom = getDistanceFromBottom();
+    const isNearBottom = distanceFromBottom <= SCROLL_BOTTOM_THRESHOLD_PX;
+    isPinnedToBottomRef.current = isNearBottom;
+    setShowScrollToBottom(!isNearBottom);
+  };
+
+  const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
+    const container = messagesContainerRef.current;
+    isPinnedToBottomRef.current = true;
+    setShowScrollToBottom(false);
+
+    const run = () => {
+      if (container) {
+        if (typeof container.scrollTo === 'function') {
+          container.scrollTo({ top: container.scrollHeight, behavior });
+        } else {
+          container.scrollTop = container.scrollHeight;
+        }
+        return;
+      }
+
+      if (typeof messagesEndRef.current?.scrollIntoView === 'function') {
+        messagesEndRef.current.scrollIntoView({ behavior });
+      }
+    };
+
+    // Wait a frame so newly rendered / growing content is measured.
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(run);
+      });
+    } else {
+      run();
     }
   };
 
   useEffect(() => {
-    scrollToBottom();
+    isGeneratingRef.current = chatState.isLoading;
+    // While a reply is generating, keep the viewport locked to the response.
+    if (chatState.isLoading) {
+      isPinnedToBottomRef.current = true;
+      scrollToBottom('smooth');
+      return;
+    }
+
+    if (!isPinnedToBottomRef.current) {
+      updateScrollToBottomVisibility();
+      return;
+    }
+    scrollToBottom('smooth');
   }, [chatState.messages, chatState.isLoading]);
+
+  useEffect(() => {
+    // Reset pinning when switching conversations.
+    isPinnedToBottomRef.current = true;
+    setShowScrollToBottom(false);
+  }, [conversationCacheKey]);
+
+  useEffect(() => {
+    const content = messagesContentRef.current;
+    if (!content || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      if (isPinnedToBottomRef.current || isGeneratingRef.current) {
+        scrollToBottom('auto');
+      } else {
+        updateScrollToBottomVisibility();
+      }
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [chatState.messages.length > 0]);
 
   const persistMessages = (messages: Message[], cacheKey: string = conversationCacheKey) => {
     messageCacheRef.current.set(cacheKey, messages);
@@ -171,6 +256,8 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
 
     const messagesWithUser = [...chatState.messages, userMessage];
     persistMessages(messagesWithUser);
+    isPinnedToBottomRef.current = true;
+    isGeneratingRef.current = true;
     setChatState((prev) => ({
       ...prev,
       messages: messagesWithUser,
@@ -178,6 +265,7 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
       error: null,
     }));
     setInputValue('');
+    scrollToBottom('smooth');
 
     try {
       let activeChatId = conversationId;
@@ -285,7 +373,7 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
     !isDraft && chatState.messages.length === 0 && !chatState.isLoading;
 
   return (
-    <div className="h-full bg-white flex flex-col">
+    <div className="h-full min-h-0 bg-white flex flex-col">
       <div className="flex-shrink-0 border-b border-gray-200 bg-white">
         <div className="max-w-4xl mx-auto px-4 py-4">
           <h1 className="text-lg font-semibold text-gray-900">{displayTitle}</h1>
@@ -315,9 +403,13 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
         </div>
       )}
 
-      <div className="flex-1 overflow-hidden">
-        <div className="h-full max-w-4xl mx-auto flex flex-col">
-          <div className="flex-1 overflow-y-auto px-4 py-6">
+      <div className="flex-1 min-h-0 overflow-hidden">
+        <div className="relative h-full max-w-4xl mx-auto flex flex-col">
+          <div
+            ref={messagesContainerRef}
+            onScroll={updateScrollToBottomVisibility}
+            className="flex-1 min-h-0 overflow-y-auto px-4 py-6"
+          >
             {chatState.isLoading && chatState.messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full">
                 <LoadingDots />
@@ -346,7 +438,7 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
                 )}
               </div>
             ) : (
-              <div className="space-y-6">
+              <div ref={messagesContentRef} className="space-y-6">
                 {chatState.messages.map((message) => (
                   <MessageComponent key={message.id} message={message} />
                 ))}
@@ -357,7 +449,20 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
             )}
           </div>
 
-          <div className="flex-shrink-0 border-t border-gray-200 bg-white">
+          <div className="relative flex-shrink-0 border-t border-gray-200 bg-white">
+            {showScrollToBottom && chatState.messages.length > 0 && (
+              <button
+                type="button"
+                onClick={() => scrollToBottom('smooth')}
+                aria-label="Scroll to latest messages"
+                title="Scroll to bottom"
+                className="absolute -top-12 right-6 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-700 shadow-lg transition-all duration-200 hover:bg-gray-50 hover:text-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                </svg>
+              </button>
+            )}
             <div className="px-4 py-4">
               {attachment && (
                 <div className="mb-3 flex items-start justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-3 py-2">
@@ -437,8 +542,8 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
                   {chatState.isLoading ? (
                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                   ) : (
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M13 5l7 7-7 7" />
                     </svg>
                   )}
                 </button>

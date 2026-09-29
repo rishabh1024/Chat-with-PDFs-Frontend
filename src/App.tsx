@@ -178,7 +178,7 @@ function ChatApp() {
           </div>
         </div>
 
-        <div className="flex-1">
+        <div className="flex-1 min-h-0 overflow-hidden">
           <ChatContainer
             conversationId={activeConversationId}
             conversationTitle={activeConversation?.title ?? null}

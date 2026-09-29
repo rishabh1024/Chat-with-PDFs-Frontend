@@ -54,10 +54,11 @@ describe('Message Component', () => {
     expect(container.querySelector('svg')).toBeInTheDocument()
   })
 
-  it('displays assistant avatar icon', () => {
+  it('displays assistant avatar with brand logo mark', () => {
     const { container } = render(<MessageComponent message={mockAssistantMessage} />)
-    
-    expect(container.querySelector('svg')).toBeInTheDocument()
+
+    const avatarSvg = container.querySelector('svg[viewBox="0 0 48 56"]')
+    expect(avatarSvg).toBeInTheDocument()
   })
 
   it('preserves whitespace and line breaks in message content', () => {

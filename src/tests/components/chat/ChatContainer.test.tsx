@@ -311,6 +311,53 @@ describe('ChatContainer', () => {
     expect(screen.getAllByText('AI Assistant').length).toBeGreaterThan(0)
   })
 
+  it('shows a scroll-to-bottom control when the chat is scrolled up', async () => {
+    mockListMessages.mockResolvedValue([
+      {
+        id: '1',
+        content: 'Older message',
+        role: 'user',
+        timestamp: new Date('2026-01-01T00:00:00.000Z'),
+      },
+      {
+        id: '2',
+        content: 'Newer reply',
+        role: 'assistant',
+        timestamp: new Date('2026-01-01T00:01:00.000Z'),
+      },
+    ])
+
+    render(<ChatContainer {...defaultProps} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Newer reply')).toBeInTheDocument()
+    })
+
+    expect(screen.queryByRole('button', { name: 'Scroll to latest messages' })).not.toBeInTheDocument()
+
+    const scrollRegion = screen.getByText('Newer reply').closest('.overflow-y-auto')
+    expect(scrollRegion).toBeTruthy()
+
+    Object.defineProperty(scrollRegion!, 'scrollHeight', { configurable: true, value: 1000 })
+    Object.defineProperty(scrollRegion!, 'clientHeight', { configurable: true, value: 400 })
+    Object.defineProperty(scrollRegion!, 'scrollTop', { configurable: true, value: 0 })
+
+    fireEvent.scroll(scrollRegion!)
+
+    expect(screen.getByRole('button', { name: 'Scroll to latest messages' })).toBeInTheDocument()
+
+    const scrollToSpy = vi.fn()
+    Object.defineProperty(scrollRegion!, 'scrollTo', {
+      configurable: true,
+      value: scrollToSpy,
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Scroll to latest messages' }))
+
+    expect(scrollToSpy).toHaveBeenCalledWith({ top: 1000, behavior: 'smooth' })
+    expect(screen.queryByRole('button', { name: 'Scroll to latest messages' })).not.toBeInTheDocument()
+  })
+
   it('keeps in-session messages when switching conversations', async () => {
     const user = userEvent.setup()
     mockSendMessage.mockResolvedValue({
