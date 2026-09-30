@@ -77,7 +77,7 @@ describe('ConversationService', () => {
       })
 
       await expect(conversationService.listConversations()).rejects.toThrow(
-        'HTTP 500: Internal Server Error'
+        'Request failed (HTTP 500)'
       )
     })
   })
@@ -185,7 +185,7 @@ describe('ConversationService', () => {
       })
 
       await expect(conversationService.listMessages(conversationId)).rejects.toThrow(
-        'HTTP 500: Server Error'
+        'Request failed (HTTP 500)'
       )
     })
   })
@@ -216,7 +216,7 @@ describe('ConversationService', () => {
       })
 
       await expect(conversationService.deleteConversation(conversationId)).rejects.toThrow(
-        'HTTP 404: Not Found'
+        'Request failed (HTTP 404)'
       )
     })
   })

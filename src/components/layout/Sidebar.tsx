@@ -1,9 +1,22 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FILE_UPLOAD_CONFIG } from '../../constants';
-import { documentService } from '../../services/documentService';
+import { documentService, HttpStatusError } from '../../services/documentService';
 import { Conversation } from '../../types/chat';
-import { DocumentRecord } from '../../types/document';
+import { DocumentIndexStatusEvent, DocumentRecord } from '../../types/document';
 import Logo from '../brand/Logo';
+
+const SUCCESS_STATUSES = new Set(['completed', 'success', 'indexed']);
+const FAILED_STATUSES = new Set(['failed', 'error']);
+const TERMINAL_STATUSES = new Set([...SUCCESS_STATUSES, ...FAILED_STATUSES]);
+/** Synthetic status used when the index-status endpoint can't tell us anything (e.g. 404). */
+const STATUS_UNAVAILABLE = 'unavailable';
+
+const SIDEBAR_TABS = [
+  { id: 'history', label: 'History', icon: '💬' },
+  { id: 'documents', label: 'Docs', icon: '📄' },
+] as const;
+
+type SidebarTabId = (typeof SIDEBAR_TABS)[number]['id'];
 
 interface SidebarProps {
   isOpen: boolean;
@@ -18,21 +31,6 @@ interface SidebarProps {
   onDeleteConversation: (id: string) => void;
 }
 
-interface SavedPrompt {
-  id: string;
-  title: string;
-  content: string;
-  category: string;
-}
-
-interface Tool {
-  id: string;
-  name: string;
-  description: string;
-  icon: string;
-  isActive: boolean;
-}
-
 const Sidebar: React.FC<SidebarProps> = ({
   isOpen,
   onToggle,
@@ -45,65 +43,14 @@ const Sidebar: React.FC<SidebarProps> = ({
   onSelectConversation,
   onDeleteConversation,
 }) => {
-  const [activeTab, setActiveTab] = useState<'history' | 'prompts' | 'documents' | 'tools'>('history');
+  const [activeTab, setActiveTab] = useState<SidebarTabId>('history');
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [documentsError, setDocumentsError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
+  const [documentStatuses, setDocumentStatuses] = useState<Record<string, DocumentIndexStatusEvent>>({});
+  const documentSubscriptionsRef = useRef<Map<string, () => void>>(new Map());
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const savedPrompts: SavedPrompt[] = [
-    {
-      id: '1',
-      title: 'Code Review',
-      content: 'Please review this code and suggest improvements for performance and readability.',
-      category: 'Development'
-    },
-    {
-      id: '2',
-      title: 'Explain Concept',
-      content: 'Explain this concept in simple terms with examples.',
-      category: 'Learning'
-    },
-    {
-      id: '3',
-      title: 'Debug Code',
-      content: 'Help me debug this code and identify the issue.',
-      category: 'Development'
-    }
-  ];
-
-  const tools: Tool[] = [
-    {
-      id: '1',
-      name: 'Code Interpreter',
-      description: 'Execute and analyze code snippets',
-      icon: '🔧',
-      isActive: true
-    },
-    {
-      id: '2',
-      name: 'Web Search',
-      description: 'Search the web for current information',
-      icon: '🔍',
-      isActive: false
-    },
-    {
-      id: '3',
-      name: 'Image Generator',
-      description: 'Generate images from text descriptions',
-      icon: '🎨',
-      isActive: false
-    },
-    {
-      id: '4',
-      name: 'Calculator',
-      description: 'Perform mathematical calculations',
-      icon: '🧮',
-      isActive: true
-    }
-  ];
 
   const formatTimeAgo = (date: Date | string) => {
     const parsedDate = typeof date === 'string' ? new Date(date) : date;
@@ -138,6 +85,59 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   }, [activeTab, loadDocuments]);
 
+  const clearDocumentSubscriptions = useCallback(() => {
+    documentSubscriptionsRef.current.forEach((unsubscribe) => unsubscribe());
+    documentSubscriptionsRef.current.clear();
+  }, []);
+
+  // Subscribe to live indexing status per document so the badge reflects
+  // the real backend state instead of assuming everything is "Indexed".
+  const subscribeToDocumentStatus = useCallback((documentId: string) => {
+    if (documentSubscriptionsRef.current.has(documentId)) return;
+
+    const unsubscribe = documentService.subscribeToIndexStatus(
+      documentId,
+      (event) => {
+        setDocumentStatuses((prev) => ({ ...prev, [documentId]: event }));
+
+        if (TERMINAL_STATUSES.has(event.status.toLowerCase())) {
+          documentSubscriptionsRef.current.get(documentId)?.();
+          documentSubscriptionsRef.current.delete(documentId);
+        }
+      },
+      (error) => {
+        const abort = documentSubscriptionsRef.current.get(documentId);
+        abort?.();
+        documentSubscriptionsRef.current.delete(documentId);
+
+        const message =
+          error instanceof HttpStatusError && error.status === 404
+            ? 'Index status not found for this document'
+            : 'Could not load index status';
+
+        setDocumentStatuses((prev) => ({
+          ...prev,
+          [documentId]: { documentId, status: STATUS_UNAVAILABLE, message },
+        }));
+      }
+    );
+
+    documentSubscriptionsRef.current.set(documentId, unsubscribe);
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'documents') {
+      clearDocumentSubscriptions();
+      return;
+    }
+
+    documents.forEach((doc) => subscribeToDocumentStatus(doc.id));
+
+    return () => {
+      clearDocumentSubscriptions();
+    };
+  }, [activeTab, documents, subscribeToDocumentStatus, clearDocumentSubscriptions]);
+
   const handleUploadClick = () => {
     fileInputRef.current?.click();
   };
@@ -152,8 +152,10 @@ const Sidebar: React.FC<SidebarProps> = ({
     setDocumentsError(null);
 
     try {
-      const uploadedDocument = await documentService.uploadDocument(file);
-      setDocuments((prev) => [uploadedDocument, ...prev]);
+      await documentService.uploadAndIndex(file);
+      // The upload response doesn't include the canonical document record,
+      // so refresh from GET /upload/documents to pick it up.
+      await loadDocuments();
     } catch (error) {
       setDocumentsError(error instanceof Error ? error.message : 'Failed to upload document');
     } finally {
@@ -161,26 +163,10 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const handleDeleteDocument = async (documentId: string) => {
-    setDeletingDocumentId(documentId);
-    setDocumentsError(null);
-
-    try {
-      await documentService.deleteDocument(documentId);
-      setDocuments((prev) => prev.filter((doc) => doc.id !== documentId));
-    } catch (error) {
-      setDocumentsError(error instanceof Error ? error.message : 'Failed to delete document');
-    } finally {
-      setDeletingDocumentId(null);
-    }
+  const handleNewChat = () => {
+    onNewChat();
+    onToggle();
   };
-
-  const tabs = [
-    { id: 'history', label: 'History', icon: '💬' },
-    { id: 'prompts', label: 'Prompts', icon: '📝' },
-    { id: 'documents', label: 'Docs', icon: '📄' },
-    { id: 'tools', label: 'Tools', icon: '🛠️' }
-  ];
 
   return (
     <>
@@ -207,10 +193,10 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         <div className="flex border-b border-gray-200">
-          {tabs.map((tab) => (
+          {SIDEBAR_TABS.map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id as 'history' | 'prompts' | 'documents' | 'tools')}
+              onClick={() => setActiveTab(tab.id)}
               className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
                 activeTab === tab.id
                   ? 'text-primary-600 border-b-2 border-primary-600 bg-primary-50'
@@ -232,7 +218,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                 <h3 className="text-sm font-medium text-gray-900">Recent Chats</h3>
                 <button
                   type="button"
-                  onClick={onNewChat}
+                  onClick={handleNewChat}
                   className="text-primary-600 hover:text-primary-700 text-sm"
                 >
                   New Chat
@@ -300,29 +286,6 @@ const Sidebar: React.FC<SidebarProps> = ({
             </div>
           )}
 
-          {activeTab === 'prompts' && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium text-gray-900">Saved Prompts</h3>
-                <button className="text-primary-600 hover:text-primary-700 text-sm">
-                  Add New
-                </button>
-              </div>
-              {savedPrompts.map((prompt) => (
-                <div
-                  key={prompt.id}
-                  className="p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
-                >
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-sm font-medium text-gray-900">{prompt.title}</h4>
-                    <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">{prompt.category}</span>
-                  </div>
-                  <p className="text-xs text-gray-500 mt-1 line-clamp-2">{prompt.content}</p>
-                </div>
-              ))}
-            </div>
-          )}
-
           {activeTab === 'documents' && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -360,59 +323,59 @@ const Sidebar: React.FC<SidebarProps> = ({
                 </p>
               )}
 
-              {documents.map((doc) => (
-                <div
-                  key={doc.id}
-                  className="p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
-                      <svg className="w-4 h-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" />
-                      </svg>
+              {documents.map((doc) => {
+                const statusEvent = documentStatuses[doc.id];
+                const normalizedStatus = statusEvent?.status?.toLowerCase();
+                const isUnavailable = normalizedStatus === STATUS_UNAVAILABLE;
+                const isFailed = normalizedStatus ? FAILED_STATUSES.has(normalizedStatus) : false;
+                const isSuccess = normalizedStatus ? SUCCESS_STATUSES.has(normalizedStatus) : false;
+
+                const statusLabel = !statusEvent
+                  ? 'Checking status…'
+                  : isUnavailable
+                    ? 'Index Status Not Available'
+                    : isFailed
+                      ? 'Failed'
+                      : isSuccess
+                        ? 'Indexed'
+                        : 'Indexing…';
+
+                const statusDotClass = !statusEvent
+                  ? 'bg-gray-300'
+                  : isUnavailable
+                    ? 'bg-gray-400'
+                    : isFailed
+                      ? 'bg-red-500'
+                      : isSuccess
+                        ? 'bg-green-500'
+                        : 'bg-amber-500';
+
+                return (
+                  <div
+                    key={doc.id}
+                    className="p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <svg className="w-4 h-4 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                          <path d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" />
+                        </svg>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-sm font-medium text-gray-900 truncate">{doc.name}</h4>
+                        <div className="mt-1 flex items-center gap-1.5" title={statusEvent?.message}>
+                          <span className={`h-2 w-2 rounded-full ${statusDotClass}`} />
+                          <span className="text-xs text-gray-500">{statusLabel}</span>
+                        </div>
+                        <span className="text-xs text-gray-400">{formatTimeAgo(doc.uploadDate)}</span>
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-sm font-medium text-gray-900 truncate">{doc.name}</h4>
-                      <p className="text-xs text-gray-500">{doc.type} • {doc.size}</p>
-                      <span className="text-xs text-gray-400">{formatTimeAgo(doc.uploadDate)}</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteDocument(doc.id)}
-                      disabled={deletingDocumentId === doc.id}
-                      className="text-xs text-red-600 hover:text-red-700 disabled:opacity-50"
-                      title="Delete document"
-                    >
-                      {deletingDocumentId === doc.id ? 'Deleting...' : 'Delete'}
-                    </button>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
-          {activeTab === 'tools' && (
-            <div className="space-y-3">
-              <h3 className="text-sm font-medium text-gray-900">Available Tools</h3>
-              {tools.map((tool) => (
-                <div
-                  key={tool.id}
-                  className="p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <span className="text-lg">{tool.icon}</span>
-                      <div>
-                        <h4 className="text-sm font-medium text-gray-900">{tool.name}</h4>
-                        <p className="text-xs text-gray-500">{tool.description}</p>
-                      </div>
-                    </div>
-                    <div className={`w-3 h-3 rounded-full ${tool.isActive ? 'bg-green-500' : 'bg-gray-300'}`} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </div>
     </>

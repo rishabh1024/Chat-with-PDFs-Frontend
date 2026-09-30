@@ -71,7 +71,7 @@ describe('ChatService', () => {
       })
 
       await expect(chatService.sendMessage(conversationId, 'Test message')).rejects.toThrow(
-        'HTTP 500: Internal Server Error'
+        'Request failed (HTTP 500)'
       )
     })
 
@@ -123,7 +123,7 @@ describe('ChatService', () => {
       })
 
       await expect(chatService.sendMessage(conversationId, 'Test message')).rejects.toThrow(
-        'HTTP 404: Unknown error'
+        'Request failed (HTTP 404)'
       )
     })
   })

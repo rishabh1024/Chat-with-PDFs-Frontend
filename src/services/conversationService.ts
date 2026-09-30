@@ -44,8 +44,7 @@ export class ConversationService {
       });
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+        throw new Error(`Request failed (HTTP ${response.status})`);
       }
 
       const data: ConversationListApiResponse = await response.json();
@@ -82,8 +81,7 @@ export class ConversationService {
       });
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+        throw new Error(`Request failed (HTTP ${response.status})`);
       }
 
       const data: ConversationApiResponse = await response.json();
@@ -118,8 +116,7 @@ export class ConversationService {
       );
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+        throw new Error(`Request failed (HTTP ${response.status})`);
       }
 
       const data = await response.json();
@@ -146,8 +143,7 @@ export class ConversationService {
       });
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+        throw new Error(`Request failed (HTTP ${response.status})`);
       }
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {

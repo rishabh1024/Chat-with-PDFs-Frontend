@@ -40,33 +40,72 @@ describe('DocumentService', () => {
   })
 
   describe('listDocuments', () => {
-    it('fetches documents from the API', async () => {
-      const mockDocuments = [
-        {
-          id: '1',
-          name: 'test.pdf',
-          type: 'PDF',
-          size: '1.0 KB',
-          uploadDate: '2026-01-01T00:00:00.000Z',
-        },
-      ]
-
+    it('fetches documents from GET /upload/documents and maps the response', async () => {
       mockFetch.mockResolvedValue({
         ok: true,
-        json: async () => mockDocuments,
+        json: async () => [
+          {
+            document_id: '1',
+            document_name: 'test.pdf',
+            created_at: '2026-01-01T00:00:00.000Z',
+          },
+        ],
       })
 
       const result = await documentService.listDocuments()
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:8000/documents',
+        'http://localhost:8000/upload/documents',
         expect.objectContaining({
           method: 'GET',
           headers: expect.any(Object),
           signal: expect.any(AbortSignal),
         })
       )
-      expect(result).toEqual(mockDocuments)
+      expect(result).toEqual([
+        { id: '1', name: 'test.pdf', uploadDate: '2026-01-01T00:00:00.000Z' },
+      ])
+    })
+
+    it('de-duplicates rows that share the same document_id, keeping the most recent one', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => [
+          {
+            document_id: 'dup-1',
+            document_name: 'first-upload.pdf',
+            created_at: '2026-01-01T00:00:00.000Z',
+          },
+          {
+            document_id: 'unique-1',
+            document_name: 'other.pdf',
+            created_at: '2026-01-01T12:00:00.000Z',
+          },
+          {
+            document_id: 'dup-1',
+            document_name: 'second-upload.pdf',
+            created_at: '2026-01-02T00:00:00.000Z',
+          },
+        ],
+      })
+
+      const result = await documentService.listDocuments()
+
+      expect(result).toEqual([
+        { id: 'unique-1', name: 'other.pdf', uploadDate: '2026-01-01T12:00:00.000Z' },
+        { id: 'dup-1', name: 'second-upload.pdf', uploadDate: '2026-01-02T00:00:00.000Z' },
+      ])
+    })
+
+    it('returns an empty array when the response is not an array', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({}),
+      })
+
+      const result = await documentService.listDocuments()
+
+      expect(result).toEqual([])
     })
 
     it('throws on HTTP errors', async () => {
@@ -76,48 +115,108 @@ describe('DocumentService', () => {
         text: async () => 'Internal Server Error',
       })
 
-      await expect(documentService.listDocuments()).rejects.toThrow(
-        'HTTP 500: Internal Server Error'
-      )
+      await expect(documentService.listDocuments()).rejects.toThrow('Request failed (HTTP 500)')
+    })
+
+    it('keeps a document when created_at is invalid until a newer valid row appears', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => [
+          {
+            document_id: 'bad-date',
+            document_name: 'orphan.pdf',
+            created_at: 'not-a-date',
+          },
+          {
+            document_id: 'bad-date',
+            document_name: 'replacement.pdf',
+            created_at: '2026-01-02T00:00:00.000Z',
+          },
+        ],
+      })
+
+      const result = await documentService.listDocuments()
+
+      expect(result).toEqual([
+        { id: 'bad-date', name: 'replacement.pdf', uploadDate: '2026-01-02T00:00:00.000Z' },
+      ])
+    })
+
+    it('retains the first row when all created_at values for an id are invalid', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => [
+          {
+            document_id: 'bad-date',
+            document_name: 'first.pdf',
+            created_at: 'not-a-date',
+          },
+          {
+            document_id: 'bad-date',
+            document_name: 'second.pdf',
+            created_at: 'also-invalid',
+          },
+        ],
+      })
+
+      const result = await documentService.listDocuments()
+
+      expect(result).toEqual([
+        { id: 'bad-date', name: 'first.pdf', uploadDate: 'not-a-date' },
+      ])
     })
   })
 
-  describe('uploadDocument', () => {
-    it('uploads a valid file using multipart form data', async () => {
-      const file = new File(['content'], 'test.pdf', { type: 'application/pdf' })
-      const uploadedDocument = {
-        id: '1',
-        name: 'test.pdf',
-        type: 'PDF',
-        size: '7 B',
-        uploadDate: '2026-01-01T00:00:00.000Z',
-      }
-
-      mockFetch.mockResolvedValue({
+  describe('subscribeToIndexStatus', () => {
+    const createStreamResponse = (chunks: string[]) => {
+      let index = 0
+      const encoder = new TextEncoder()
+      return {
         ok: true,
-        json: async () => uploadedDocument,
-      })
+        body: {
+          getReader: () => ({
+            read: async () => {
+              if (index >= chunks.length) {
+                return { done: true, value: undefined }
+              }
+              const value = encoder.encode(chunks[index])
+              index += 1
+              return { done: false, value }
+            },
+          }),
+        },
+      }
+    }
 
-      const result = await documentService.uploadDocument(file)
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:8000/documents',
-        expect.objectContaining({
-          method: 'POST',
-          body: expect.any(FormData),
-          signal: expect.any(AbortSignal),
-        })
+    it('parses SSE frames delimited with CRLF', async () => {
+      const onEvent = vi.fn()
+      mockFetch.mockResolvedValue(
+        createStreamResponse([
+          'data: {"document_id":"1","status":"pending"}\r\n\r\n',
+          'data: {"document_id":"1","status":"completed"}\r\n\r\n',
+        ])
       )
-      expect(result).toEqual(uploadedDocument)
+
+      const unsubscribe = documentService.subscribeToIndexStatus('1', onEvent)
+      await vi.waitFor(() => {
+        expect(onEvent).toHaveBeenCalledTimes(2)
+      })
+      unsubscribe()
     })
 
-    it('rejects invalid files before making a request', async () => {
-      const file = new File(['content'], 'test.exe', { type: 'application/x-msdownload' })
-
-      await expect(documentService.uploadDocument(file)).rejects.toThrow(
-        'Unsupported file type'
+    it('parses a final frame without a trailing blank line', async () => {
+      const onEvent = vi.fn()
+      mockFetch.mockResolvedValue(
+        createStreamResponse(['data: {"document_id":"1","status":"completed"}\r\n'])
       )
-      expect(mockFetch).not.toHaveBeenCalled()
+
+      const unsubscribe = documentService.subscribeToIndexStatus('1', onEvent)
+      await vi.waitFor(() => {
+        expect(onEvent).toHaveBeenCalledWith(
+          expect.objectContaining({ status: 'completed' })
+        )
+      })
+      unsubscribe()
     })
   })
 
@@ -156,6 +255,15 @@ describe('DocumentService', () => {
       })
     })
 
+    it('rejects invalid files before making a request', async () => {
+      const file = new File(['content'], 'test.exe', { type: 'application/x-msdownload' })
+
+      await expect(documentService.uploadAndIndex(file)).rejects.toThrow(
+        'Unsupported file type'
+      )
+      expect(mockFetch).not.toHaveBeenCalled()
+    })
+
     it('rejects invalid response data', async () => {
       const file = new File(['content'], 'test.pdf', { type: 'application/pdf' })
       mockFetch.mockResolvedValue({
@@ -165,37 +273,6 @@ describe('DocumentService', () => {
 
       await expect(documentService.uploadAndIndex(file)).rejects.toThrow(
         'Invalid upload response format'
-      )
-    })
-  })
-
-  describe('deleteDocument', () => {
-    it('sends a delete request for the document id', async () => {
-      mockFetch.mockResolvedValue({
-        ok: true,
-      })
-
-      await documentService.deleteDocument('doc-1')
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:8000/documents/doc-1',
-        expect.objectContaining({
-          method: 'DELETE',
-          headers: expect.any(Object),
-          signal: expect.any(AbortSignal),
-        })
-      )
-    })
-
-    it('throws on HTTP errors', async () => {
-      mockFetch.mockResolvedValue({
-        ok: false,
-        status: 404,
-        text: async () => 'Document not found',
-      })
-
-      await expect(documentService.deleteDocument('missing')).rejects.toThrow(
-        'HTTP 404: Document not found'
       )
     })
   })

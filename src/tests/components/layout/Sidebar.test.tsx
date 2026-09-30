@@ -1,15 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '../../../test-utils/testing-library-utils'
+import { act, render, screen, waitFor } from '../../../test-utils/testing-library-utils'
 import userEvent from '@testing-library/user-event'
 import { Sidebar } from '../../../components/layout'
-import { documentService } from '../../../services/documentService'
+import { documentService, HttpStatusError } from '../../../services/documentService'
 import { Conversation } from '../../../types/chat'
 
 vi.mock('../../../services/documentService', () => ({
   documentService: {
     listDocuments: vi.fn(),
-    uploadDocument: vi.fn(),
-    deleteDocument: vi.fn(),
+    uploadAndIndex: vi.fn(),
+    subscribeToIndexStatus: vi.fn(),
+  },
+  HttpStatusError: class HttpStatusError extends Error {
+    status: number
+    constructor(status: number, message: string) {
+      super(message)
+      this.name = 'HttpStatusError'
+      this.status = status
+    }
   },
 }))
 
@@ -49,6 +57,7 @@ describe('Sidebar', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockDocumentService.listDocuments.mockResolvedValue([])
+    mockDocumentService.subscribeToIndexStatus.mockReturnValue(() => {})
   })
 
   it('renders sidebar with tabs', () => {
@@ -57,6 +66,8 @@ describe('Sidebar', () => {
     expect(screen.getByLabelText('Chat with PDFs')).toBeInTheDocument()
     expect(screen.getByText('Docs')).toBeInTheDocument()
     expect(screen.getByText('History')).toBeInTheDocument()
+    expect(screen.queryByText('Prompts')).not.toBeInTheDocument()
+    expect(screen.queryByText('Tools')).not.toBeInTheDocument()
   })
 
   it('lists conversations in the history tab', () => {
@@ -84,13 +95,14 @@ describe('Sidebar', () => {
     expect(screen.getByText('Failed to load conversations')).toBeInTheDocument()
   })
 
-  it('calls onNewChat when New Chat is clicked', async () => {
+  it('calls onNewChat and closes the sidebar when New Chat is clicked', async () => {
     const user = userEvent.setup()
     render(<Sidebar {...defaultProps} />)
 
     await user.click(screen.getByRole('button', { name: 'New Chat' }))
 
     expect(defaultProps.onNewChat).toHaveBeenCalled()
+    expect(defaultProps.onToggle).toHaveBeenCalled()
   })
 
   it('calls onSelectConversation when a chat is clicked', async () => {
@@ -112,17 +124,21 @@ describe('Sidebar', () => {
     expect(defaultProps.onSelectConversation).not.toHaveBeenCalled()
   })
 
-  it('loads and displays documents when the documents tab is active', async () => {
+  it('loads documents and subscribes to their live index status', async () => {
     const user = userEvent.setup()
     mockDocumentService.listDocuments.mockResolvedValue([
       {
         id: '1',
         name: 'API Documentation.pdf',
-        type: 'PDF',
-        size: '2.4 MB',
         uploadDate: '2026-01-01T00:00:00.000Z',
       },
     ])
+
+    let capturedOnEvent: ((event: { documentId: string; status: string }) => void) | undefined
+    mockDocumentService.subscribeToIndexStatus.mockImplementation((_id, onEvent) => {
+      capturedOnEvent = onEvent
+      return () => {}
+    })
 
     render(<Sidebar {...defaultProps} />)
     await user.click(screen.getByText('Docs'))
@@ -132,7 +148,104 @@ describe('Sidebar', () => {
     })
 
     expect(screen.getByText('API Documentation.pdf')).toBeInTheDocument()
-    expect(screen.getByText('PDF • 2.4 MB')).toBeInTheDocument()
+    expect(mockDocumentService.subscribeToIndexStatus).toHaveBeenCalledWith(
+      '1',
+      expect.any(Function),
+      expect.any(Function)
+    )
+
+    // Before a status event arrives, we should not assume the document is indexed.
+    expect(screen.getByText('Checking status…')).toBeInTheDocument()
+    expect(screen.queryByText('Indexed')).not.toBeInTheDocument()
+
+    act(() => {
+      capturedOnEvent?.({ documentId: '1', status: 'completed' })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('Indexed')).toBeInTheDocument()
+    })
+  })
+
+  it('shows "Indexing…" for an unrecognized live status instead of "Indexed"', async () => {
+    const user = userEvent.setup()
+    mockDocumentService.listDocuments.mockResolvedValue([
+      {
+        id: '1',
+        name: 'API Documentation.pdf',
+        uploadDate: '2026-01-01T00:00:00.000Z',
+      },
+    ])
+
+    mockDocumentService.subscribeToIndexStatus.mockImplementation((documentId, onEvent) => {
+      onEvent({
+        documentId,
+        status: 'started',
+        message: 'Indexing has started',
+      })
+      return () => {}
+    })
+
+    render(<Sidebar {...defaultProps} />)
+    await user.click(screen.getByText('Docs'))
+
+    await waitFor(() => {
+      expect(screen.getByText('Indexing…')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Indexed')).not.toBeInTheDocument()
+  })
+
+  it('shows an "Indexing…" badge while the backend status is pending (not "Indexed")', async () => {
+    const user = userEvent.setup()
+    mockDocumentService.listDocuments.mockResolvedValue([
+      {
+        id: '1',
+        name: 'API Documentation.pdf',
+        uploadDate: '2026-01-01T00:00:00.000Z',
+      },
+    ])
+
+    mockDocumentService.subscribeToIndexStatus.mockImplementation((documentId, onEvent) => {
+      onEvent({
+        documentId,
+        status: 'pending',
+        message: `Indexing is in progress for document: ${documentId}`,
+      })
+      return () => {}
+    })
+
+    render(<Sidebar {...defaultProps} />)
+    await user.click(screen.getByText('Docs'))
+
+    await waitFor(() => {
+      expect(screen.getByText('Indexing…')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Indexed')).not.toBeInTheDocument()
+  })
+
+  it('shows "Index Status Not Available" when the status endpoint 404s', async () => {
+    const user = userEvent.setup()
+    mockDocumentService.listDocuments.mockResolvedValue([
+      {
+        id: '1',
+        name: 'API Documentation.pdf',
+        uploadDate: '2026-01-01T00:00:00.000Z',
+      },
+    ])
+
+    mockDocumentService.subscribeToIndexStatus.mockImplementation((_documentId, _onEvent, onError) => {
+      onError?.(new HttpStatusError(404, 'HTTP 404: Not Found'))
+      return () => {}
+    })
+
+    render(<Sidebar {...defaultProps} />)
+    await user.click(screen.getByText('Docs'))
+
+    await waitFor(() => {
+      expect(screen.getByText('Index Status Not Available')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Checking status…')).not.toBeInTheDocument()
+    expect(screen.queryByText('Indexed')).not.toBeInTheDocument()
   })
 
   it('shows empty state when no documents exist', async () => {
@@ -146,15 +259,24 @@ describe('Sidebar', () => {
     })
   })
 
-  it('uploads a document when a file is selected', async () => {
+  it('uploads a document via uploadAndIndex and refreshes the document list', async () => {
     const user = userEvent.setup()
-    mockDocumentService.uploadDocument.mockResolvedValue({
-      id: '2',
-      name: 'notes.pdf',
-      type: 'PDF',
-      size: '1.0 KB',
-      uploadDate: '2026-01-02T00:00:00.000Z',
+    mockDocumentService.uploadAndIndex.mockResolvedValue({
+      documentId: 'doc-2',
+      fileHash: 'hash-2',
+      uploadStatus: 'Success',
+      uploadError: null,
+      indexingStatus: { vectorStore: 'Indexed' },
     })
+    mockDocumentService.listDocuments
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: 'doc-2',
+          name: 'notes.pdf',
+          uploadDate: '2026-01-02T00:00:00.000Z',
+        },
+      ])
 
     render(<Sidebar {...defaultProps} />)
     await user.click(screen.getByText('Docs'))
@@ -165,38 +287,30 @@ describe('Sidebar', () => {
     await user.upload(fileInput, file)
 
     await waitFor(() => {
-      expect(mockDocumentService.uploadDocument).toHaveBeenCalledWith(file)
+      expect(mockDocumentService.uploadAndIndex).toHaveBeenCalledWith(file)
+    })
+
+    await waitFor(() => {
+      expect(mockDocumentService.listDocuments).toHaveBeenCalledTimes(2)
     })
 
     expect(screen.getByText('notes.pdf')).toBeInTheDocument()
   })
 
-  it('deletes a document when delete is clicked', async () => {
+  it('shows an error when document upload fails', async () => {
     const user = userEvent.setup()
-    mockDocumentService.listDocuments.mockResolvedValue([
-      {
-        id: '1',
-        name: 'API Documentation.pdf',
-        type: 'PDF',
-        size: '2.4 MB',
-        uploadDate: '2026-01-01T00:00:00.000Z',
-      },
-    ])
-    mockDocumentService.deleteDocument.mockResolvedValue()
+    mockDocumentService.uploadAndIndex.mockRejectedValue(new Error('Upload failed'))
 
     render(<Sidebar {...defaultProps} />)
     await user.click(screen.getByText('Docs'))
 
+    const file = new File(['content'], 'notes.pdf', { type: 'application/pdf' })
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
+
+    await user.upload(fileInput, file)
+
     await waitFor(() => {
-      expect(screen.getByText('API Documentation.pdf')).toBeInTheDocument()
+      expect(screen.getByText('Upload failed')).toBeInTheDocument()
     })
-
-    await user.click(screen.getByRole('button', { name: 'Delete' }))
-
-    await waitFor(() => {
-      expect(mockDocumentService.deleteDocument).toHaveBeenCalledWith('1')
-    })
-
-    expect(screen.queryByText('API Documentation.pdf')).not.toBeInTheDocument()
   })
 })

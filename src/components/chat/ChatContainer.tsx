@@ -471,10 +471,7 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
                       {attachment.fileName}
                     </p>
                     <p className="text-xs text-green-700">
-                      Uploaded and indexed
-                      {Object.keys(attachment.upload.indexingStatus).length > 0 && (
-                        <> · {Object.values(attachment.upload.indexingStatus).join(', ')}</>
-                      )}
+                      Upload complete. Track indexing progress in Sidebar → Docs.
                     </p>
                   </div>
                   <button

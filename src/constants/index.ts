@@ -21,10 +21,10 @@ export const API_ENDPOINTS = {
   CONVERSATION_MESSAGES_LIST: (conversationId: string) =>
     `/conversations/${conversationId}/messages`,
   UPLOAD_AND_INDEX: '/upload/',
+  LIST_DOCUMENTS: '/upload/documents',
   INDEX_STATUS_EVENTS: (documentId: string) =>
     `/upload/index_status/${documentId}/events`,
   HEALTH: '/health',
-  DOCUMENTS: '/documents',
 } as const;
 
 export const FILE_UPLOAD_CONFIG = {

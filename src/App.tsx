@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from './auth/AuthContext';
 import LoginSignupPage from './components/auth/LoginSignupPage';
 import Logo from './components/brand/Logo';
@@ -12,7 +12,8 @@ import {
 } from './utils/chatSession';
 
 function ChatApp() {
-  const { user, signOut } = useAuth();
+  const { user, signOut, sessionOrigin } = useAuth();
+  const initialConversationChoiceAppliedRef = useRef(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
@@ -37,7 +38,11 @@ function ChatApp() {
     try {
       const data = await conversationService.listConversations();
       setConversations(data);
-      selectConversation(resolveActiveConversationId(data));
+      // Read sessionOrigin at fetch time. A ref captured at mount stays false
+      // while origin is still null, then misses a later 'signed_in'.
+      selectConversation(
+        sessionOrigin === 'signed_in' ? null : resolveActiveConversationId(data)
+      );
     } catch (error) {
       setConversationsError(
         error instanceof Error ? error.message : 'Failed to load conversations'
@@ -45,11 +50,15 @@ function ChatApp() {
     } finally {
       setConversationsLoading(false);
     }
-  }, [selectConversation]);
+  }, [selectConversation, sessionOrigin]);
 
   useEffect(() => {
+    // Wait until auth classifies the session. Loading before that would
+    // restore the previous chat and never revisit the choice.
+    if (sessionOrigin === null || initialConversationChoiceAppliedRef.current) return;
+    initialConversationChoiceAppliedRef.current = true;
     loadConversations();
-  }, [loadConversations]);
+  }, [loadConversations, sessionOrigin]);
 
   const handleNewChat = () => {
     selectConversation(null);

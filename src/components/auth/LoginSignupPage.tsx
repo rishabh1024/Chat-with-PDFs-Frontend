@@ -4,7 +4,7 @@ import Logo from '../brand/Logo';
 
 type AuthMode = 'login' | 'signup';
 
-const MIN_PASSWORD_LENGTH = 8;
+const MIN_PASSWORD_LENGTH = 6;
 
 /** Avoid leaking Supabase enumeration details (e.g. "User already registered"). */
 const toFriendlyAuthError = (err: unknown, mode: AuthMode): string => {

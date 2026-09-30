@@ -132,7 +132,7 @@ describe('LoginSignupPage', () => {
     expect(await screen.findByText('Invalid email or password.')).toBeInTheDocument();
   });
 
-  it('rejects passwords shorter than 8 characters', async () => {
+  it('rejects passwords shorter than 6 characters', async () => {
     const user = userEvent.setup();
     renderPage();
 
@@ -141,7 +141,7 @@ describe('LoginSignupPage', () => {
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
     expect(
-      await screen.findByText('Password must be at least 8 characters.')
+      await screen.findByText('Password must be at least 6 characters.')
     ).toBeInTheDocument();
     expect(signInWithPassword).not.toHaveBeenCalled();
   });

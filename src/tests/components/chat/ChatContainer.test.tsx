@@ -430,7 +430,9 @@ describe('ChatContainer', () => {
 
     expect(mockUploadAndIndex).toHaveBeenCalledWith(file)
     expect(await screen.findByText('profile.pdf')).toBeInTheDocument()
-    expect(screen.getByText(/Uploaded and indexed/)).toHaveTextContent('Indexed')
+    expect(
+      screen.getByText('Upload complete. Track indexing progress in Sidebar → Docs.')
+    ).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Remove attachment' }))
     expect(screen.queryByText('profile.pdf')).not.toBeInTheDocument()

@@ -31,8 +31,7 @@ export class ChatService {
       );
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+        throw new Error(`Request failed (HTTP ${response.status})`);
       }
 
       const data = await response.json();

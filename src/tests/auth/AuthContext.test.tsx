@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AuthProvider, useAuth } from '../../auth/AuthContext';
 import { getAccessToken } from '../../config/api';
@@ -9,7 +9,9 @@ const onAuthStateChange = vi.fn();
 const signInWithPassword = vi.fn();
 const signUp = vi.fn();
 const signOut = vi.fn();
+const refreshSession = vi.fn();
 const unsubscribe = vi.fn();
+let authStateChangeCallback: ((event: string, session: unknown) => void) | null = null;
 
 vi.mock('../../lib/supabaseClient', () => ({
   supabase: {
@@ -19,12 +21,20 @@ vi.mock('../../lib/supabaseClient', () => ({
       signInWithPassword: (...args: unknown[]) => signInWithPassword(...args),
       signUp: (...args: unknown[]) => signUp(...args),
       signOut: (...args: unknown[]) => signOut(...args),
+      refreshSession: (...args: unknown[]) => refreshSession(...args),
     },
   },
 }));
 
 const AuthProbe = () => {
-  const { user, loading, signIn, signUp: register, signOut: logout } = useAuth();
+  const {
+    user,
+    loading,
+    sessionOrigin,
+    signIn,
+    signUp: register,
+    signOut: logout,
+  } = useAuth();
 
   if (loading) {
     return <div>loading</div>;
@@ -34,6 +44,7 @@ const AuthProbe = () => {
     <div>
       <div data-testid="user-email">{user?.email ?? 'none'}</div>
       <div data-testid="access-token">{getAccessToken() ?? 'none'}</div>
+      <div data-testid="session-origin">{sessionOrigin ?? 'none'}</div>
       <button type="button" onClick={() => signIn('a@b.com', 'secret1')}>
         Sign in
       </button>
@@ -52,8 +63,12 @@ describe('AuthContext', () => {
     vi.clearAllMocks();
     window.localStorage.clear();
     getSession.mockResolvedValue({ data: { session: null } });
-    onAuthStateChange.mockReturnValue({
+    authStateChangeCallback = null;
+    onAuthStateChange.mockImplementation((callback) => {
+      authStateChangeCallback = callback;
+      return {
       data: { subscription: { unsubscribe } },
+      };
     });
   });
 
@@ -75,11 +90,19 @@ describe('AuthContext', () => {
 
     expect(await screen.findByTestId('user-email')).toHaveTextContent('user@example.com');
     expect(screen.getByTestId('access-token')).toHaveTextContent('token-abc');
+    expect(screen.getByTestId('session-origin')).toHaveTextContent('restored');
   });
 
-  it('signs in with email and password', async () => {
+  it('marks an interactive credential login as a fresh sign-in', async () => {
     const user = userEvent.setup();
-    signInWithPassword.mockResolvedValue({ error: null });
+    const signedInSession = {
+      access_token: 'fresh-token',
+      user: { id: '1', email: 'a@b.com' },
+    };
+    signInWithPassword.mockImplementation(async () => {
+      authStateChangeCallback?.('SIGNED_IN', signedInSession);
+      return { data: { session: signedInSession }, error: null };
+    });
 
     render(
       <AuthProvider>
@@ -95,6 +118,110 @@ describe('AuthContext', () => {
         email: 'a@b.com',
         password: 'secret1',
       });
+      expect(screen.getByTestId('session-origin')).toHaveTextContent('signed_in');
+    });
+  });
+
+  it('does not overwrite signed_in when getSession resolves after an interactive sign-in', async () => {
+    const user = userEvent.setup();
+    let resolveGetSession: (value: { data: { session: unknown } }) => void = () => {};
+    getSession.mockReturnValue(
+      new Promise((resolve) => {
+        resolveGetSession = resolve;
+      })
+    );
+
+    const signedInSession = {
+      access_token: 'fresh-token',
+      user: { id: '1', email: 'a@b.com' },
+    };
+    signInWithPassword.mockImplementation(async () => {
+      authStateChangeCallback?.('SIGNED_IN', signedInSession);
+      return { data: { session: signedInSession }, error: null };
+    });
+
+    render(
+      <AuthProvider>
+        <AuthProbe />
+      </AuthProvider>
+    );
+
+    act(() => {
+      authStateChangeCallback?.('INITIAL_SESSION', null);
+    });
+
+    await screen.findByTestId('user-email');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('session-origin')).toHaveTextContent('signed_in');
+    });
+
+    await act(async () => {
+      resolveGetSession({
+        data: {
+          session: {
+            access_token: 'stale-from-get-session',
+            user: { id: '1', email: 'a@b.com' },
+          },
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('session-origin')).toHaveTextContent('signed_in');
+      expect(screen.getByTestId('access-token')).toHaveTextContent('fresh-token');
+    });
+  });
+
+  it('treats a non-interactive SIGNED_IN event as a restored session', async () => {
+    render(
+      <AuthProvider>
+        <AuthProbe />
+      </AuthProvider>
+    );
+
+    await screen.findByTestId('user-email');
+    act(() => {
+      authStateChangeCallback?.('SIGNED_IN', {
+        access_token: 'restored-token',
+        user: { id: '1', email: 'user@example.com' },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('session-origin')).toHaveTextContent('restored');
+    });
+  });
+
+  it('preserves the session origin when Supabase refreshes the token', async () => {
+    getSession.mockResolvedValue({
+      data: {
+        session: {
+          access_token: 'token-abc',
+          user: { id: '1', email: 'user@example.com' },
+        },
+      },
+    });
+
+    render(
+      <AuthProvider>
+        <AuthProbe />
+      </AuthProvider>
+    );
+
+    expect(await screen.findByTestId('session-origin')).toHaveTextContent('restored');
+
+    act(() => {
+      authStateChangeCallback?.('TOKEN_REFRESHED', {
+        access_token: 'token-refreshed',
+        user: { id: '1', email: 'user@example.com' },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('access-token')).toHaveTextContent('token-refreshed');
+      expect(screen.getByTestId('session-origin')).toHaveTextContent('restored');
     });
   });
 
